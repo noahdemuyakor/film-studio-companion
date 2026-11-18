@@ -108,7 +108,7 @@ async function keepMedia(src: File | string): Promise<{ url: string; type: strin
   } catch (e) {
     if (type.startsWith("video/")) {
       const blob = await (await fetch(inline)).blob();
-      return { url: URL.createObjectURL(blob), type, note: `Kept until reload: start the local bridge to keep videos (${e instanceof Error ? e.message : e}).` };
+      return { url: URL.createObjectURL(blob), type, note: `Kept until reload: restart the local bridge (start-bridge.ps1) to keep videos (${e instanceof Error ? e.message : e}).` };
     }
     return { url: inline, type };
   }
@@ -172,6 +172,7 @@ function TextNode({ id, data, selected }: NodeProps) {
   const tw = Number(data.w) || 260;
   return (
     <div style={{ width: tw }} className={`relative rounded-12 bg-[#f4efe2] text-[#1b2024] shadow-xl ${selected ? "ring-2 ring-[#8db600]" : ""}`}>
+      <NodeWidthHandle id={id} w={tw} def={260} min={180} max={900} />
       <div className="flex items-center gap-1.5 px-3 pt-2 text-[11px] font-semibold text-[#1b2024]/60">
         <Note size={11} /> Text note
         <span className="flex-1" />
