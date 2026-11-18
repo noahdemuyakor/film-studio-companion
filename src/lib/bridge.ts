@@ -343,7 +343,7 @@ export async function executeOnPlatform(pf: Platform, model: ModelDef, controls:
   let url: string | undefined;
   let simulated = true;
   if (st.liveRenders && pf.status === "connected") {
-    if ((pf.mode === "mcp-remote" || pf.mode === "mcp-stdio") && (pf.adapter || detectAdapter(pf))) {
+    if (pf.adapter || detectAdapter(pf)) {
       // a built-in adapter knows this platform's real inputs and how to fetch the finished file
       const c = controls as { prompt?: string; aspect_ratio?: string; duration?: number; resolution?: string };
       url = await renderOn(
