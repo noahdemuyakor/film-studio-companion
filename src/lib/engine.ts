@@ -230,7 +230,7 @@ export async function compilePrompt(prompt: string, s: CinemaSettings, model: Mo
     `Prompt Compiler → ${model.name}`,
     async () => {
       const text = await callClaude(
-        `You are the Optical Prompt Compiler of an AI film studio. Translate the director's UI state into ONE hyper-optimised prompt for the target model "${model.name}" (${model.vendor}). Required syntax: ${STYLE_GUIDE[model.promptStyle]}. Respect the model's capabilities: ${model.capabilities.join(", ")}. Keep it under 120 words. Output only the prompt.`,
+        `You are the Optical Prompt Compiler of an AI film studio. Translate the director's UI state into ONE hyper-optimised prompt for the target model "${model.name}" (${model.vendor}). Required syntax: ${STYLE_GUIDE[model.promptStyle]}. Respect the model's capabilities: ${model.capabilities.join(", ")}. The "idea" is the subject of the shot and must stay its subject: never replace or drop what it describes. Use the "continuity" descriptors only for characters, props or places the idea names or clearly calls for (a person, someone, she/he…); if the idea doesn't feature a character, leave the cast out and keep only the lighting/style continuity. Keep it under 120 words. Output only the prompt.`,
         JSON.stringify({ idea: prompt, camera: s, continuity: cont, tempo: tempoLabel(s.tempo) }),
         600,
       );

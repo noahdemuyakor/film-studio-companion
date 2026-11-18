@@ -153,7 +153,7 @@ const initial = () => ({
   endFrame: undefined,
   autoChain: true,
   refIds: [] as string[],
-  castIds: ["cast_maya"],
+  castIds: [],
   shots: [] as Shot[],
   images: [] as Shot[],
   vault: sampleVault,
