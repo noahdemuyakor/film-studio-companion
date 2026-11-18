@@ -310,7 +310,8 @@ const refFile = (src: string) => bridgePost<{ path: string; type: string }>("/me
 const refBytes = (src: string) => bridgePost<{ base64: string; type: string; size: number }>("/media/bytes", { src });
 // data: URLs, web files, and files this computer's bridge serves (canvas uploads, Google Flow results)
 const usable = (m: MediaInput) => !!m.url && /^(data:|https:|http:\/\/(127\.0\.0\.1|localhost):\d+\/files\/)/.test(m.url);
-const isVideoUrl = (u: string) => u.startsWith("data:video/") || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u);
+// also extensionless CDN links under a /videos/ folder (Flick)
+const isVideoUrl = (u: string) => u.startsWith("data:video/") || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u) || /\/videos?\//i.test(u);
 
 export interface RenderResult {
   url: string;
@@ -770,10 +771,15 @@ async function pvReference(pf: Platform, m: MediaInput, onLine: Line): Promise<{
   for (let i = 0; i < 40; i++) {
     const s = await pvCall<{ status?: string; asset_id?: string | number; error?: unknown }>(pf, "import_status", { operation_id: op });
     if (s.asset_id) return { type: "upload", id: String(s.asset_id) };
-    if (/fail|error/i.test(String(s.status || ""))) throw new Error(`PixVerse couldn't import the reference: ${s._text.slice(0, 160)}`);
+    if (/fail|error/i.test(String(s.status || ""))) {
+      const why = (s.error as { message?: string } | undefined)?.message || s._text.slice(0, 120);
+      onLine(`PixVerse couldn't fetch a reference (${why}): it was left out.`);
+      return null;
+    }
     await sleep(3000);
   }
-  throw new Error("PixVerse took too long to import the reference");
+  onLine("PixVerse took too long to import a reference: it was left out.");
+  return null;
 }
 
 async function pixverse(pf: Platform, model: string, mode: string, req: RenderRequest, onLine: Line): Promise<RenderResult> {
@@ -781,10 +787,16 @@ async function pixverse(pf: Platform, model: string, mode: string, req: RenderRe
   const media = (req.media || []).filter((m) => m.url || m.native);
   const refs: { type: string; id: string; role: string; video: boolean }[] = [];
   let skipped = 0;
+  const takesVideo = kind === "video" && mode.startsWith("ref:") && Number(mode.split(":")[2] || 0) > 0;
   for (const m of media) {
+    if (isVideoUrl(m.url || "") && !takesVideo && m.native?.platformId !== pf.id) {
+      onLine(`${pvName(model)} can't use a video as a reference: it was left out.`);
+      continue;
+    }
+    const local = !!m.url && !/^https:/.test(m.url) && m.native?.platformId !== pf.id;
     const r = await pvReference(pf, m, onLine);
     if (r) refs.push({ ...r, role: m.role, video: r.type === "video" || isVideoUrl(m.url || "") });
-    else skipped++;
+    else if (local) skipped++;
   }
   if (skipped)
     onLine(`PixVerse only takes references that are PixVerse renders or files at a public https link: ${skipped} reference${skipped === 1 ? " was" : "s were"} left out. Render the reference on PixVerse first, or use another platform for uploaded files.`);
@@ -812,6 +824,7 @@ async function pixverse(pf: Platform, model: string, mode: string, req: RenderRe
     } else {
       const first = refs.find((r) => !r.video);
       if (first) args.images = [{ type: first.type, id: first.id }];
+      if (refs.some((r) => r.video)) onLine(`${pvName(model)} can't start from a video: video references were left out (use a reference-mode model such as Seedance 2.5 or V6).`);
       if (extra.length) onLine(`${pvName(model)} on PixVerse animates one first frame; pick a model with reference mode (Seedance, Kling O3, Wan 3.0, V6…) to use several references.`);
     }
   }
