@@ -396,7 +396,8 @@ async function openartUpload(pf: Platform, src: string, purpose: string): Promis
   const signUrl = sign?.signURL || sign?.signUrl;
   if (!signUrl || !sign?.accessURL) throw new Error("OpenArt didn't give an upload link");
   await bridgePost("/media/put", { signUrl, src, contentType: b.type });
-  const meta = parse<{ visualReference?: unknown }>(await call(pf, "openart_upload_metadata_get", { accessURL: sign.accessURL, uploadId: sign.uploadId }));
+  const mediaType = b.type.startsWith("video") ? "video" : "image";
+  const meta = parse<{ visualReference?: unknown }>(await call(pf, "openart_upload_metadata_get", { mediaUrl: sign.accessURL, mediaType, ...(sign.uploadId ? { uploadId: sign.uploadId } : {}) }));
   if (!meta?.visualReference) throw new Error("OpenArt didn't accept the reference");
   return meta.visualReference;
 }
