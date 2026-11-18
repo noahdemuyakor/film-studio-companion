@@ -18,19 +18,24 @@
   --color-dark-2: #1a1a1a;
   --color-w5: #ffffff0d;
   --color-w10: #ffffff1a;
+  --color-w20: #ffffff33;
   --color-w30: #ffffff4d;
   --color-w40: #ffffff66;
   --color-w50: #ffffff80;
   --color-w60: #ffffff99;
+  --color-w70: #ffffffb3;
+  --color-w80: #ffffffcc;
 
   --text-10: 10px;
   --text-12: 12px;
+  --text-13: 13px;
   --text-14: 14px;
   --text-16: 16px;
   --text-18: 18px;
   --text-20: 20px;
   --text-24: 24px;
   --text-28: 28px;
+  --text-32: 32px;
   --text-36: 36px;
   --text-40: 40px;
   --text-48: 48px;

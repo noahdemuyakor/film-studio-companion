@@ -14,6 +14,17 @@ const base = (size = 16): SVGProps<SVGSVGElement> => ({
 
 export const Plus = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M12 5v14M5 12h14" /></svg>);
 export const Minus = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M5 12h14" /></svg>);
+export const Cursor = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M5 3l14 7-6 2-2 6z" /></svg>);
+export const Hand = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M8 13V5a1.5 1.5 0 013 0v6M11 11V4a1.5 1.5 0 013 0v7M14 11V6a1.5 1.5 0 013 0v8a6 6 0 01-6 6h-1a6 6 0 01-5-2.7L3 14.5a1.5 1.5 0 012.4-1.8L8 15" /></svg>);
+export const Frame = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><rect x="3" y="6" width="18" height="14" rx="2" /><path d="M3 3h7" /></svg>);
+export const TextT = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M5 6V4h14v2M12 4v16M9 20h6" /></svg>);
+export const Note = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M5 3h10l4 4v14H5z" /><path d="M9 12h6M9 16h4" /></svg>);
+export const Heart = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z" /></svg>);
+export const Upload = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M12 16V4M7 9l5-5 5 5M4 20h16" /></svg>);
+export const Send = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M12 19V5M5 12l7-7 7 7" /></svg>);
+export const Wand = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M4 20L16 8M14 4v2M18 6h2M18 10v2M10 4H8" /></svg>);
+export const Layout = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>);
+export const Panel = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>);
 export const Arrow = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M5 12h14M13 6l6 6-6 6" /></svg>);
 export const ChevronR = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M9 6l6 6-6 6" /></svg>);
 export const ChevronL = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M15 6l-6 6 6 6" /></svg>);

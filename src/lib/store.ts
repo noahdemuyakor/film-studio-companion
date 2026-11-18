@@ -64,21 +64,14 @@ const sampleVault: VaultRef[] = [
   { id: "ref_style", kind: "style", name: "Coastal noir", description: "teal shadows, amber highlights, soft halation, 35mm grain", tags: ["grade"], createdAt: Date.now() },
 ];
 
+/** A fresh canvas: one section with a text note wired into an empty image node. */
 const initialNodes: Node[] = [
-  { id: "n_script", type: "script", position: { x: 0, y: 40 }, data: { text: SAMPLE_SCRIPT.split("\n").slice(0, 6).join("\n") } },
-  { id: "n_maya", type: "character", position: { x: 380, y: -40 }, data: { castId: "cast_maya" } },
-  { id: "n_pier", type: "location", position: { x: 380, y: 230 }, data: { refId: "ref_pier", lighting: "Golden Hour" } },
-  { id: "n_shot1", type: "shot", position: { x: 760, y: 40 }, data: { title: "Shot 1 — Maya on the pier", prompt: "Maya walks the pier holding the envelope, scanning the boats", modelId: "kling-3-0" } },
-  { id: "n_shot2", type: "shot", position: { x: 1160, y: 40 }, data: { title: "Shot 2 — Jonah lowers camera", prompt: "Jonah lowers his camera slowly as Maya approaches", modelId: "kling-3-0" } },
-  { id: "n_compare", type: "compare", position: { x: 760, y: 520 }, data: { prompt: "Wide establishing shot of the harbour at golden hour", modelIds: ["omni-flash", "wan-2-7", "veo-3-1"] } },
+  { id: "n_sec1", type: "section", position: { x: 0, y: 0 }, zIndex: -1, style: { width: 760, height: 420 }, data: { title: "Scene 1", color: "#3a4650" } },
+  { id: "n_note1", type: "text", position: { x: 40, y: 70 }, data: { text: "Describe your first shot here, then press Generate on the image node it's connected to." } },
+  { id: "n_img1", type: "media", position: { x: 380, y: 70 }, data: { kind: "image", title: "Shot 1", prompt: "", aspect: "16:9" } },
 ];
 
-const initialEdges: Edge[] = [
-  { id: "e1", source: "n_maya", target: "n_shot1", animated: true },
-  { id: "e2", source: "n_pier", target: "n_shot1", animated: true },
-  { id: "e3", source: "n_shot1", target: "n_shot2", animated: true, label: "last frame → first frame" },
-  { id: "e4", source: "n_pier", target: "n_compare", animated: true },
-];
+const initialEdges: Edge[] = [{ id: "e_note1", source: "n_note1", target: "n_img1" }];
 
 
 export interface StudioState {
@@ -110,6 +103,8 @@ export interface StudioState {
   // Canvas
   nodes: Node[];
   edges: Edge[];
+  canvasPrefs: { lines: "all" | "selected" | "off"; minimap: boolean; playOnHover: boolean; assistantOpen: boolean };
+  canvasChat: { role: "user" | "assistant"; text: string }[];
   // Timeline
   clips: Clip[];
   burnSubtitles: boolean;
@@ -153,6 +148,8 @@ const initial = () => ({
   activeEpisode: "",
   nodes: initialNodes,
   edges: initialEdges,
+  canvasPrefs: { lines: "all", minimap: true, playOnHover: true, assistantOpen: true } as StudioState["canvasPrefs"],
+  canvasChat: [] as StudioState["canvasChat"],
   clips: [] as Clip[],
   burnSubtitles: true,
   timelineOpen: true,

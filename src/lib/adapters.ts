@@ -7,7 +7,7 @@
  */
 import { useStudio } from "./store";
 import { bridgeHeaders, mcpRpc, textOf } from "./bridge";
-import type { ModelDef, ModelKind, Platform } from "./types";
+import type { MediaInput, ModelDef, ModelKind, Platform } from "./types";
 
 export type AdapterId = NonNullable<Platform["adapter"]>;
 
@@ -292,11 +292,17 @@ export interface RenderRequest {
   duration: number;
   resolution?: string;
   maxCredits: number; // refuse anything quoted above this
+  media?: MediaInput[]; // first frame and reference images wired into the render
+}
+
+export interface RenderResult {
+  url: string;
+  nativeId?: string; // the platform's own id for the result (Flick job id)
 }
 
 type Line = (l: string) => void;
 
-export async function renderOn(pf: Platform, req: RenderRequest, onLine: Line = () => {}): Promise<string> {
+export async function renderOn(pf: Platform, req: RenderRequest, onLine: Line = () => {}): Promise<RenderResult> {
   const adapter = pf.adapter || detectAdapter(pf);
   const nat = pf.nativeModels?.[req.modelId];
   if (!adapter) throw new Error(`${pf.name} has no render adapter`);
@@ -304,15 +310,20 @@ export async function renderOn(pf: Platform, req: RenderRequest, onLine: Line = 
   if (req.kind === "video" && nat.durations?.length) req = { ...req, duration: nearest(req.duration || 5, nat.durations) };
   // the platform's own spelling of the nearest resolution it offers; none listed -> let the platform use its default
   req = { ...req, resolution: pickRes(req.resolution, nat.resolutions) };
-  if (adapter === "pixmax") return pixmax(pf, nat.id, req, onLine);
   if (adapter === "flick") return flick(pf, nat.id, req, onLine);
-  if (adapter === "openart") return openart(pf, nat.id, nat.mode || (req.kind === "image" ? "text2image" : "text2video"), req, onLine);
-  if (adapter === "imagineart") return imagine(pf, nat.id, req, onLine);
-  return flow(pf, nat.id, req, onLine);
+  const url =
+    adapter === "pixmax"
+      ? await pixmax(pf, nat.id, req, onLine)
+      : adapter === "openart"
+        ? await openart(pf, nat.id, nat.mode || (req.kind === "image" ? "text2image" : "text2video"), req, onLine)
+        : adapter === "imagineart"
+          ? await imagine(pf, nat.id, req, onLine)
+          : await flow(pf, nat.id, req, onLine);
+  return { url };
 }
 
 /* --- Flick: jobs on a project board; video animates a first frame --- */
-async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Line): Promise<string> {
+async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Line): Promise<RenderResult> {
   const project_id = pf.adapterConfig?.projectId;
   if (!project_id) throw new Error("Choose a Flick project for renders in Settings → Flick.");
   const board_name = "Film Studio Companion";
@@ -332,16 +343,23 @@ async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Li
     if (!id) throw new Error("Flick didn't start the job");
     return id;
   };
+  // images made on Flick can be passed by their job id; images from elsewhere can't be uploaded through Flick's tools
+  const onFlick = (m: MediaInput) => (m.native?.platformId === pf.id ? m.native.id : undefined);
+  const refs = (req.media || []).filter((m) => m.role === "ref").map(onFlick).filter(Boolean) as string[];
+  const first = (req.media || []).filter((m) => m.role === "first").map(onFlick).find(Boolean);
   let job: string;
   if (req.kind === "image") {
     onLine(`Flick: ${model}`);
-    job = await start("generate_image", { prompt: req.prompt, model, aspect_ratio: req.aspect, max_credits: req.maxCredits, ...(req.resolution ? { settings: { resolution: req.resolution } } : {}) });
+    job = await start("generate_image", { prompt: req.prompt, model, aspect_ratio: req.aspect, max_credits: req.maxCredits, ...(req.resolution ? { settings: { resolution: req.resolution } } : {}), ...(refs.length ? { reference_media_ids: refs.slice(0, 10) } : {}) });
     await wait(job, "image");
   } else {
-    // Flick animates an image: make a 1-credit first frame, then the video
-    onLine("Flick: first frame (gpt-image-2, 1 cr)…");
-    const frame = await start("generate_image", { prompt: req.prompt, model: "gpt-image-2", settings: { quality: "low", resolution: "1K" }, aspect_ratio: req.aspect, max_credits: 3 });
-    await wait(frame, "first frame");
+    // Flick animates an image: the wired first frame if it was made on Flick, else a 1-credit frame from the prompt
+    let frame = first;
+    if (!frame) {
+      onLine("Flick: first frame (gpt-image-2, 1 cr)…");
+      frame = await start("generate_image", { prompt: req.prompt, model: "gpt-image-2", settings: { quality: "low", resolution: "1K" }, aspect_ratio: req.aspect, max_credits: 3, ...(refs.length ? { reference_media_ids: refs.slice(0, 10) } : {}) });
+      await wait(frame, "first frame");
+    } else onLine("Flick: animating your frame…");
     onLine(`Flick: ${model} video…`);
     job = await start("generate_video", { prompt: req.prompt, start_frame_media_id: frame, model, duration: String(Math.round(req.duration || 5)), aspect_ratio: req.aspect, max_credits: req.maxCredits, ...(req.resolution ? { settings: { resolution: req.resolution } } : {}) });
     await wait(job, "video");
@@ -349,7 +367,7 @@ async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Li
   const d = parse<{ media?: { url: string }[] }>(await call(pf, "download_media", { project_id, media_ids: [job] }));
   const url = d?.media?.[0]?.url;
   if (!url) throw new Error("Flick finished but returned no file link");
-  return url;
+  return { url, nativeId: job };
 }
 
 /* --- OpenArt: form-driven params, poll by historyId --- */
@@ -401,10 +419,12 @@ async function openart(pf: Platform, model: string, mode: string, req: RenderReq
 async function imagine(pf: Platform, model: string, req: RenderRequest, onLine: Line): Promise<string> {
   const org_id = await imagineOrg(pf);
   onLine(`ImagineArt: ${model}`);
+  const web = (req.media || []).filter((m) => m.url && /^https?:/.test(m.url));
+  const image_url = (req.kind === "video" ? [...web.filter((m) => m.role === "first"), ...web.filter((m) => m.role === "ref")] : web).map((m) => m.url!).slice(0, 4);
   const t =
     req.kind === "image"
-      ? await call(pf, "generate_image", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, ...(req.resolution ? { resolution: req.resolution } : {}) })
-      : await call(pf, "generate_video", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, duration: String(Math.round(req.duration || 5)), ...(req.resolution ? { resolution: req.resolution } : {}) });
+      ? await call(pf, "generate_image", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, ...(req.resolution ? { resolution: req.resolution } : {}), ...(image_url.length ? { image_url } : {}) })
+      : await call(pf, "generate_video", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, duration: String(Math.round(req.duration || 5)), ...(req.resolution ? { resolution: req.resolution } : {}), ...(image_url.length ? { image_url } : {}) });
   const id = (parse<{ id?: string; uuid?: string }>(t)?.uuid || parse<{ id?: string }>(t)?.id || t.match(UUID)?.[0]) as string | undefined;
   if (!id) throw new Error(`ImagineArt didn't start the job: ${t.slice(0, 200)}`);
   const media = /https?:\/\/[^\s"'<>)]+?\.(png|jpe?g|webp|gif|mp4|mov|webm)(\?[^\s"'<>)]*)?/i;

@@ -5,7 +5,7 @@
  */
 import { useStudio } from "./store";
 import { decryptSecret } from "./secure";
-import type { LedgerEntry, McpTool, ModelDef, Platform, RouteMode, RoutePlan } from "./types";
+import type { LedgerEntry, McpTool, MediaInput, ModelDef, Platform, RouteMode, RoutePlan } from "./types";
 import { getPath, uid } from "./util";
 import { estimateCost } from "./router";
 import { callClaude, claudeSource } from "./engine";
@@ -338,19 +338,22 @@ export async function planRoute(model: ModelDef, mode: RouteMode, lockId: string
 }
 
 /** Run a render through a platform. Returns the asset URL or marks the result as a preview. */
-export async function executeOnPlatform(pf: Platform, model: ModelDef, controls: Record<string, unknown>, payload: unknown, cost: number, onLine?: (l: string) => void): Promise<{ url?: string; simulated: boolean }> {
+export async function executeOnPlatform(pf: Platform, model: ModelDef, controls: Record<string, unknown>, payload: unknown, cost: number, onLine?: (l: string) => void): Promise<{ url?: string; simulated: boolean; nativeId?: string }> {
   const st = useStudio.getState();
   let url: string | undefined;
   let simulated = true;
+  let nativeId: string | undefined;
   if (st.liveRenders && pf.status === "connected") {
     if (pf.adapter || detectAdapter(pf)) {
       // a built-in adapter knows this platform's real inputs and how to fetch the finished file
-      const c = controls as { prompt?: string; aspect_ratio?: string; duration?: number; resolution?: string };
-      url = await renderOn(
+      const c = controls as { prompt?: string; aspect_ratio?: string; duration?: number; resolution?: string; media?: MediaInput[] };
+      const out = await renderOn(
         pf,
-        { modelId: model.id, kind: model.kind, prompt: String(c.prompt || ""), aspect: c.aspect_ratio || "16:9", duration: Number(c.duration) || 5, resolution: c.resolution, maxCredits: Math.ceil(cost * 1.5) + 5 },
+        { modelId: model.id, kind: model.kind, prompt: String(c.prompt || ""), aspect: c.aspect_ratio || "16:9", duration: Number(c.duration) || 5, resolution: c.resolution, maxCredits: Math.ceil(cost * 1.5) + 5, media: c.media || [] },
         onLine,
       );
+      url = out.url;
+      nativeId = out.nativeId;
       simulated = false;
     } else if (pf.mode === "mcp-remote" || pf.mode === "mcp-stdio") {
       const tool = pf.tools.find((t) => t.role === "generate" && (model.kind === "image" ? /image|imagine/.test(t.name) : /video|clip|generate/.test(t.name))) || pf.tools.find((t) => t.role === "generate");
@@ -374,7 +377,7 @@ export async function executeOnPlatform(pf: Platform, model: ModelDef, controls:
   const live = !simulated ? await syncBalance(useStudio.getState().platforms.find((x) => x.id === pf.id)!) : null;
   // previews spend nothing, so they leave the wallet alone; real renders use the live balance, or deduct the estimate when there is none
   if (live === null && !simulated) addLedger(pf.id, -cost, `${model.name} render`, "estimate");
-  return { url, simulated };
+  return { url, simulated, nativeId };
 }
 
 /* ------------------------------ Pre-flight ------------------------------ */

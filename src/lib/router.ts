@@ -1,7 +1,7 @@
 "use client";
 /** Modular provider router: maps app controls onto each model's payload and dispatches the call. */
 import { nearest, pickRes } from "./adapters";
-import type { CastMember, CinemaSettings, ModelDef, RouteMode, RoutePlan, Shot, VaultRef } from "./types";
+import type { CastMember, CinemaSettings, MediaInput, ModelDef, RouteMode, RoutePlan, Shot, VaultRef } from "./types";
 import { executeOnPlatform, planRoute } from "./bridge";
 import { decryptSecret } from "./secure";
 import { getPath, hash, setPath, uid } from "./util";
@@ -70,6 +70,8 @@ export interface ProduceInput {
   lockId?: string;
   plan?: RoutePlan;
   onLine?: (l: string) => void;
+  /** images wired into the render: first frame and references */
+  media?: MediaInput[];
 }
 
 /** Full pipeline: Continuity Guardian → Optical Prompt Compiler → payload mapping → provider dispatch. */
@@ -123,9 +125,9 @@ export async function produceShot(input: ProduceInput, onStage?: (s: Shot["statu
     const plan = input.plan || (await planRoute(model, input.routeMode || st.routeMode, input.lockId ?? st.lockPlatform, duration));
     if (plan.blocked) return { ...base, credits: 0, route: plan.reason, status: "error", error: plan.blocked };
     const pf = plan.platformId ? useStudio.getState().platforms.find((x) => x.id === plan.platformId) : undefined;
-    const controls = { prompt: compiled.value, aspect_ratio: settings.aspect, duration, seed, resolution: settings.resolution };
+    const controls = { prompt: compiled.value, aspect_ratio: settings.aspect, duration, seed, resolution: settings.resolution, media: input.media || [] };
     const r = pf ? await executeOnPlatform(pf, model, controls, payload, plan.cost, input.onLine) : await dispatch(model, payload);
-    return { ...base, credits: plan.cost, platformId: plan.platformId, route: plan.reason, status: "done", resultUrl: r.url, simulated: r.simulated };
+    return { ...base, credits: plan.cost, platformId: plan.platformId, route: plan.reason, status: "done", resultUrl: r.url, simulated: r.simulated, nativeId: "nativeId" in r ? r.nativeId : undefined };
   } catch (e) {
     return { ...base, status: "error", error: e instanceof Error ? e.message : String(e) };
   }

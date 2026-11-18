@@ -156,6 +156,15 @@ export interface Shot {
   engine?: "live" | "local";
   platformId?: string | null;
   route?: string;
+  /** the platform's own id for the result (e.g. a Flick job id), so it can be a first frame or reference there */
+  nativeId?: string;
+}
+
+/** an image passed into a render: the first frame of a video, or a reference */
+export interface MediaInput {
+  role: "first" | "ref";
+  url?: string;
+  native?: { platformId: string; id: string };
 }
 
 export interface DialogueLine {
