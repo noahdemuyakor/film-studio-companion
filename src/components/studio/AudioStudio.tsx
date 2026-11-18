@@ -30,7 +30,12 @@ export default function AudioStudio() {
     speechSynthesis.onvoiceschanged = load;
   }, []);
 
+  const [advanced, setAdvanced] = useState(false);
+  const [rate, setRate] = useState(1);
+  const [pitch, setPitch] = useState<number | null>(null);
+  const [onlyThisVoice, setOnlyThisVoice] = useState(false);
   const member = st.cast.find((c) => c.id === castId);
+  const shownTakes = onlyThisVoice ? takes.filter((t) => t.castId === castId && t.voice === voice) : takes;
   const speak = (t: Take) => {
     if (typeof speechSynthesis === "undefined") return;
     const u = new SpeechSynthesisUtterance(t.text);
@@ -43,7 +48,7 @@ export default function AudioStudio() {
   };
   const generate = () => {
     if (!script.trim()) return;
-    const made: Take[] = Array.from({ length: batch }, (_, k) => ({ id: uid("take"), text: script, voice, castId, rate: 1 - k * 0.05, pitch: member?.voice.pitch ?? 1, at: Date.now() }));
+    const made: Take[] = Array.from({ length: batch }, (_, k) => ({ id: uid("take"), text: script, voice, castId, rate: Math.max(0.5, rate - k * 0.05), pitch: pitch ?? member?.voice.pitch ?? 1, at: Date.now() }));
     setTakes((v) => [...made, ...v]);
     setPanel("history");
     speak(made[0]);
@@ -126,9 +131,24 @@ export default function AudioStudio() {
           <textarea aria-label="Voice details" maxLength={500} value={details || member?.voice.style || ""} onChange={(e) => setDetails(e.target.value)} placeholder="e.g. Young female voice with a british accent, soft and loud. Excited, giggling" className="flex-1 bg-transparent resize-none outline-none text-12 leading-[18px] placeholder:text-w40" />
           <span className="self-end text-[11px] text-w50">{details.length}/500</span>
         </section>
-        <button className="shrink-0 h-10 px-1 text-14 font-semibold flex items-center gap-2">
-          <Sliders size={14} /> Advanced settings <ChevronR size={14} className="ml-auto" />
+        <button onClick={() => setAdvanced(!advanced)} aria-expanded={advanced} className="shrink-0 h-10 px-1 text-14 font-semibold flex items-center gap-2">
+          <Sliders size={14} /> Advanced settings <ChevronR size={14} className={`ml-auto transition-transform ${advanced ? "rotate-90" : ""}`} />
         </button>
+        {advanced && (
+          <div className="shrink-0 rounded-12 bg-w5 p-3 flex flex-col gap-3 text-12">
+            <label className="flex items-center gap-3">
+              <span className="w-12 text-w50">Speed</span>
+              <input type="range" min={0.5} max={1.5} step={0.05} value={rate} onChange={(e) => setRate(Number(e.target.value))} className="flex-1 accent-[#8db600]" />
+              <span className="w-10 text-right tabular-nums">{rate.toFixed(2)}x</span>
+            </label>
+            <label className="flex items-center gap-3">
+              <span className="w-12 text-w50">Pitch</span>
+              <input type="range" min={0.5} max={1.5} step={0.05} value={pitch ?? member?.voice.pitch ?? 1} onChange={(e) => setPitch(Number(e.target.value))} className="flex-1 accent-[#8db600]" />
+              <span className="w-10 text-right tabular-nums">{(pitch ?? member?.voice.pitch ?? 1).toFixed(2)}</span>
+            </label>
+            <button onClick={() => (setRate(1), setPitch(null))} className="self-end text-w50 hover:text-white">Reset</button>
+          </div>
+        )}
       </div>
       <div className="p-3 pt-0">
         <button onClick={generate} className="w-full h-[52px] rounded-12 text-18 font-medium text-dark-2" style={{ background: "linear-gradient(180deg,#8db600,#668400)" }}>
@@ -149,12 +169,12 @@ export default function AudioStudio() {
           <button onClick={() => setPanel("how")} className={`h-9 px-3 rounded-8 text-12 font-semibold flex items-center gap-1.5 ${panel === "how" ? "bg-w10" : "text-w60"}`}>
             <Book size={14} /> How it works
           </button>
-          <button className="ml-auto h-9 px-3 rounded-8 border border-w10 text-12 font-semibold text-w60 flex items-center gap-1.5">
-            <Sliders size={14} /> Filters
+          <button onClick={() => (setOnlyThisVoice(!onlyThisVoice), setPanel("history"))} title="Show only takes in the voice picked on the left" className={`ml-auto h-9 px-3 rounded-8 border border-w10 text-12 font-semibold flex items-center gap-1.5 ${onlyThisVoice ? "bg-w10 text-white" : "text-w60"}`}>
+            <Sliders size={14} /> {onlyThisVoice ? "This voice only" : "All voices"}
           </button>
         </div>
         <div className="thin-scroll flex-1 overflow-y-auto rounded-16 border border-w10 bg-[#232a2f]">
-          {panel === "how" || takes.length === 0 ? (
+          {panel === "how" || shownTakes.length === 0 ? (
             <div className="px-4 py-10 text-center">
               <h2 className="font-display font-bold uppercase text-28 leading-8">Turn text into speech</h2>
               <p className="mt-2 text-18 text-w50 max-w-[300px] mx-auto leading-7">Lifelike speech from any script — ready for your timeline</p>
@@ -174,7 +194,7 @@ export default function AudioStudio() {
             </div>
           ) : (
             <ul className="p-3 flex flex-col gap-2">
-              {takes.map((t) => (
+              {shownTakes.map((t) => (
                 <li key={t.id} className="rounded-12 bg-w5 p-3 flex items-center gap-3">
                   <button onClick={() => speak(t)} className="w-10 h-10 rounded-full bg-lime text-dark grid place-items-center shrink-0" aria-label="Play">
                     ▶

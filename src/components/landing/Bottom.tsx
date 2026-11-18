@@ -454,7 +454,7 @@ export function Blog() {
             Get the know-how you need. Our team shares practical tricks, breaks down new models and writes step-by-step guides to help you plan, shoot and
             cut better AI films.
           </p>
-          <button className="btn-white mt-6 lg:mt-[90px] h-[46px] px-3 rounded-12 text-14 md:text-16 font-semibold">Read our blog</button>
+          <a href="#faq" className="btn-white mt-6 lg:mt-[90px] h-[46px] px-3 rounded-12 text-14 md:text-16 font-semibold flex items-center">Read the FAQ</a>
         </div>
         <div ref={track} className="no-scrollbar flex gap-6 overflow-x-auto -mr-[100vw] pr-[100vw]">
           {POSTS.map((p) => (

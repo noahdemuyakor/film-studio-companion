@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import Scene from "../Scene";
 import { Arrow, Bars, ChevronR, Clock, Copy, Expand, Image as ImageIcon, Plus, Rerun, Speaker, Spark, Trash } from "../Icons";
 import { useStudio } from "@/lib/store";
+import { ASPECTS } from "@/lib/presets";
 
 const H2 = "font-display font-bold uppercase text-28 md:text-40 lg:text-48 leading-[1.17]";
 
@@ -15,9 +16,14 @@ export function Hero() {
   const [text, setText] = useState("");
   const [dur, setDur] = useState(8);
   const [audio, setAudio] = useState(true);
+  const [aspect, setAspect] = useState(settings.aspect || "16:9");
   const go = () => {
-    set({ prompt: text, settings: { ...settings, duration: dur, audio } });
+    set({ prompt: text, settings: { ...settings, duration: dur, audio, aspect } });
     router.push("/ai/video/");
+  };
+  const nextAspect = () => {
+    const i = ASPECTS.findIndex((a) => a.id === aspect);
+    setAspect(ASPECTS[(i + 1) % ASPECTS.length].id);
   };
   return (
     <section className="relative md:mt-2 overflow-hidden" aria-label="AI video generator">
@@ -49,7 +55,7 @@ export function Hero() {
           <div className="hidden md:flex absolute z-10 left-1/2 -translate-x-1/2 top-[580px] w-[672px] max-w-[calc(100%-16px)] h-[116px] rounded-16 border border-w10 bg-[#00000033] backdrop-blur-xl p-2 gap-2">
             <div className="flex-1 min-w-0 flex flex-col">
               <div className="flex items-start gap-3 pl-1 pt-2">
-                <button aria-label="Upload image" className="w-8 h-8 shrink-0 rounded-8 bg-w5 grid place-items-center">
+                <button aria-label="Add a reference image" title="Add a reference image in the video studio" onClick={go} className="w-8 h-8 shrink-0 rounded-8 bg-w5 grid place-items-center">
                   <Plus size={16} />
                 </button>
                 <textarea
@@ -68,8 +74,8 @@ export function Hero() {
                 <button onClick={() => setDur(dur >= 15 ? 5 : dur + 1)} className="h-8 px-2.5 rounded-8 bg-w5 flex items-center gap-1.5 text-12 font-semibold">
                   <Clock size={14} className="text-w50" /> {dur}s
                 </button>
-                <button className="h-8 px-2.5 rounded-8 bg-w5 flex items-center gap-1.5 text-12 font-semibold">
-                  <Expand size={14} className="text-w50" /> Auto
+                <button onClick={nextAspect} title="Aspect ratio" className="h-8 px-2.5 rounded-8 bg-w5 flex items-center gap-1.5 text-12 font-semibold">
+                  <Expand size={14} className="text-w50" /> {aspect}
                 </button>
                 <button onClick={() => setAudio(!audio)} className="h-8 px-2.5 rounded-8 bg-w5 flex items-center gap-1.5 text-12 font-semibold">
                   <Speaker size={14} className="text-w50" /> {audio ? "On" : "Off"}

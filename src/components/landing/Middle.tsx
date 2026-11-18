@@ -229,10 +229,10 @@ export function ModelsCloud() {
 }
 
 const USES = [
-  { t: "Filmmakers & directors", scene: "golf" },
-  { t: "Marketing agencies", scene: "green" },
-  { t: "Content creators", scene: "creator" },
-  { t: "E-commerce brands", scene: "product" },
+  { t: "Filmmakers & directors", scene: "golf", href: "/short-drama/" },
+  { t: "Marketing agencies", scene: "green", href: "/ai/video/" },
+  { t: "Content creators", scene: "creator", href: "/canvas/" },
+  { t: "E-commerce brands", scene: "product", href: "/ai/image/" },
 ];
 
 export function UseCases() {
@@ -256,9 +256,9 @@ export function UseCases() {
               <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/50 to-transparent" />
               <div className="absolute left-6 right-6 bottom-6 flex items-end justify-between gap-4">
                 <h3 className="font-display font-bold uppercase text-24 md:text-28 leading-[36px] max-w-[200px] md:max-w-[300px]">{u.t}</h3>
-                <button aria-label={`More about ${u.t}`} className="w-[42px] h-10 shrink-0 rounded-full bg-white text-dark grid place-items-center">
+                <NextLink href={u.href} aria-label={`Start: ${u.t}`} className="w-[42px] h-10 shrink-0 rounded-full bg-white text-dark grid place-items-center">
                   <Plus size={14} />
-                </button>
+                </NextLink>
               </div>
             </Scene>
           ))}

@@ -28,6 +28,13 @@ export default function ImageStudio() {
   const price = usePrice(model, 0);
 
   const [hint, setHint] = useState("");
+  const [large, setLarge] = useState(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const mention = (c: { id: string; name: string }) => {
+    setText((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}${c.name} `);
+    if (!st.castIds.includes(c.id)) st.set({ castIds: [...st.castIds, c.id] });
+    setMentionOpen(false);
+  };
   const generate = async () => {
     if (!text.trim()) {
       setHint("Describe the image first.");
@@ -71,8 +78,8 @@ export default function ImageStudio() {
   return (
     <div className="relative max-w-app mx-auto min-h-[calc(100vh-112px)] md:min-h-[calc(100vh-84px)] px-4 pb-[150px]">
       <div className="flex justify-end">
-        <button className="h-8 px-2.5 rounded-8 border border-w10 text-14 font-semibold flex items-center gap-2">
-          <Grid size={14} /> View
+        <button type="button" onClick={() => setLarge(!large)} title={large ? "Show a compact grid" : "Show larger images"} className="h-8 px-2.5 rounded-8 border border-w10 text-14 font-semibold flex items-center gap-2">
+          <Grid size={14} /> {large ? "Large" : "Grid"}
         </button>
       </div>
       {banner && (
@@ -93,7 +100,7 @@ export default function ImageStudio() {
         </aside>
       )}
       {hasImages ? (
-        <div className="max-w-app mx-auto mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className={`max-w-app mx-auto mt-6 grid gap-3 ${large ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"}`}>
           {st.images.map((img) => (
             <ShotCard key={img.id} shot={img} onDelete={() => st.update("images", (v) => v.filter((x) => x.id !== img.id))} />
           ))}
@@ -128,9 +135,28 @@ export default function ImageStudio() {
           {hint && <p className="text-12 text-[#ff5c9a] px-1.5">{hint}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
             <RefPicker refs={refs} onChange={setRefs} />
-            <button type="button" aria-label="Mention element" className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
-              <At size={14} />
-            </button>
+            <div className="relative">
+              <button type="button" aria-label="Mention a cast member" title="Add a cast member to the prompt" aria-expanded={mentionOpen} onClick={() => setMentionOpen(!mentionOpen)} className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
+                <At size={14} />
+              </button>
+              {mentionOpen && (
+                <div className="absolute bottom-10 left-0 w-[220px] rounded-12 bg-pop border border-w10 p-1.5 shadow-2xl z-30">
+                  {st.cast.length === 0 ? (
+                    <p className="text-12 text-w50 p-2">
+                      No cast yet. Add characters in the{" "}
+                      <NextLink href="/ai/video/#vault" className="text-lime underline">vault</NextLink>.
+                    </p>
+                  ) : (
+                    st.cast.map((c) => (
+                      <button type="button" key={c.id} onClick={() => mention(c)} className="w-full text-left h-8 px-2 rounded-8 text-12 font-semibold hover:bg-w10 flex items-center gap-2">
+                        @{c.name}
+                        {st.castIds.includes(c.id) && <span className="ml-auto text-[10px] text-lime">locked</span>}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             <div className="h-8 px-2.5 rounded-8 bg-w5 flex items-center gap-1.5 text-14 font-semibold">
               <Spark size={14} className="text-lime" />
               <Select label="Image model" value={st.imageModelId} onChange={(v) => st.set({ imageModelId: v })} options={imageModels.map((m) => ({ id: m.id, label: m.name }))} className="w-auto" />
