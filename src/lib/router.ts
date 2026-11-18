@@ -1,5 +1,6 @@
 "use client";
 /** Modular provider router: maps app controls onto each model's payload and dispatches the call. */
+import { nearest } from "./adapters";
 import type { CastMember, CinemaSettings, ModelDef, RouteMode, RoutePlan, Shot, VaultRef } from "./types";
 import { executeOnPlatform, planRoute } from "./bridge";
 import { decryptSecret } from "./secure";
@@ -78,7 +79,9 @@ export async function produceShot(input: ProduceInput, onStage?: (s: Shot["statu
   const cont = await continuity(input.cast, input.refs, settings, input.prev);
   const compiled = await compilePrompt(input.prompt, settings, model, cont.value);
   onStage?.("rendering", { compiled: compiled.value, continuity: cont.value });
-  const duration = Math.min(30, settings.duration + (input.extendBack || 0) + (input.extendForward || 0));
+  const asked = Math.min(30, settings.duration + (input.extendBack || 0) + (input.extendForward || 0));
+  // keep the clip to a length the model really accepts (some go to 30 s, some only 8)
+  const duration = model.kind !== "video" ? asked : model.durations?.length ? nearest(asked, model.durations) : Math.min(asked, model.maxDuration || asked);
   const seed = hash(input.prompt + Date.now()) % 100000;
   const negative = compiled.value.includes("Negative prompt:") ? compiled.value.split("Negative prompt:")[1].trim() : undefined;
   const payload = buildPayload(model, {

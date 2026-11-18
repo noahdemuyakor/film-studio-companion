@@ -73,6 +73,8 @@ export interface ModelDef {
   tier: "draft" | "final";
   promptStyle: PromptStyle;
   maxDuration: number;
+  /** exact clip lengths (seconds) the model accepts, when its platforms publish them */
+  durations?: number[];
   enabled: boolean;
   builtin: boolean;
   blurb: string;
@@ -249,7 +251,7 @@ export interface Platform {
   /** per-platform choices the adapter needs: Flick project, ImagineArt organization */
   adapterConfig?: { projectId?: string; projectName?: string; orgId?: string };
   /** registry model id -> this platform's own model id (and OpenArt mode) */
-  nativeModels?: Record<string, { id: string; mode?: string; kind: ModelKind }>;
+  nativeModels?: Record<string, { id: string; mode?: string; kind: ModelKind; durations?: number[] }>;
 }
 
 export interface LedgerEntry {

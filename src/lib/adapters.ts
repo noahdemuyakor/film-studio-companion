@@ -55,7 +55,27 @@ export interface CatalogEntry {
   kind: ModelKind;
   credits: number; // per image, or per ~5 s of video
   mode?: string;
+  durations?: number[]; // video clip lengths this platform accepts for the model
 }
+
+const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
+const nums = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isFinite(n) && n > 0) : []);
+const uniq = (a: number[]) => [...new Set(a)].sort((x, y) => x - y);
+/** "kling-4.0: 3 through 30 (any whole second)" / "veo-3.1, veo-3.1-fast: 4, 6, 8" lines from a tool description */
+function durationTable(desc: string): Record<string, number[]> {
+  const sec = desc.split(/duration \(optional\)/i)[1]?.split(/•\s*resolution/i)[0] || "";
+  const out: Record<string, number[]> = {};
+  sec.split("\n").forEach((line) => {
+    const m = line.match(/^\s*-\s*([^:]+):\s*(.+)$/);
+    if (!m) return;
+    const thr = m[2].match(/(\d+)\s*through\s*(\d+)/i);
+    const list = thr ? range(Number(thr[1]), Number(thr[2])) : (m[2].match(/\d+/g) || []).map(Number);
+    if (list.length) m[1].split(",").forEach((id) => (out[id.trim()] = list));
+  });
+  return out;
+}
+/** the length closest to what was asked for, among those allowed */
+export const nearest = (want: number, allowed?: number[]) => (allowed?.length ? allowed.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
 
 /** "8-28 credits" -> 8; "31-47/s" -> 31*5 (5 s clip) */
 function creditsFrom(v: unknown, kind: ModelKind): number {
@@ -67,10 +87,10 @@ function creditsFrom(v: unknown, kind: ModelKind): number {
 const FLOW_MODELS: CatalogEntry[] = [
   { native: "Nano Banana 2.1", name: "Nano Banana 2.1", kind: "image", credits: 0 },
   { native: "Nano Banana Pro", name: "Nano Banana Pro", kind: "image", credits: 0 },
-  { native: "Omni 1.1 Flash", name: "Omni 1.1 Flash", kind: "video", credits: 7 },
-  { native: "Veo 3.1 - Lite", name: "Veo 3.1 Lite", kind: "video", credits: 10 },
-  { native: "Veo 3.1 - Fast", name: "Veo 3.1 Fast", kind: "video", credits: 20 },
-  { native: "Veo 3.1 - Quality", name: "Veo 3.1", kind: "video", credits: 100 },
+  { native: "Omni 1.1 Flash", name: "Omni 1.1 Flash", kind: "video", credits: 7, durations: [4, 6, 8, 10] },
+  { native: "Veo 3.1 - Lite", name: "Veo 3.1 Lite", kind: "video", credits: 10, durations: [8] },
+  { native: "Veo 3.1 - Fast", name: "Veo 3.1 Fast", kind: "video", credits: 20, durations: [8] },
+  { native: "Veo 3.1 - Quality", name: "Veo 3.1", kind: "video", credits: 100, durations: [8] },
 ];
 
 export async function catalog(pf: Platform, adapter: AdapterId): Promise<CatalogEntry[]> {
@@ -78,8 +98,10 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
   if (adapter === "flick") {
     const out: CatalogEntry[] = [];
     for (const kind of ["image", "video"] as const) {
-      const j = parse<{ models?: { id: string; name: string; credits?: string }[] }>(await call(pf, "list_models", { kind }));
-      (j?.models || []).filter((m) => m.id !== "auto").forEach((m) => out.push({ native: m.id, name: m.name, kind, credits: creditsFrom(m.credits, kind) }));
+      const j = parse<{ models?: { id: string; name: string; credits?: string; settings?: { duration?: unknown } }[] }>(await call(pf, "list_models", { kind }));
+      (j?.models || [])
+        .filter((m) => m.id !== "auto")
+        .forEach((m) => out.push({ native: m.id, name: m.name, kind, credits: creditsFrom(m.credits, kind), durations: kind === "video" ? uniq(nums(m.settings?.duration)) : undefined }));
     }
     return out;
   }
@@ -93,16 +115,34 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
       if (img) out.push({ native: m.id, name: m.displayName, kind: "image", credits: Math.round(img.totalCredits || 0), mode: img.mode });
       if (vid) out.push({ native: m.id, name: m.displayName, kind: "video", credits: Math.round(vid.totalCredits || 0), mode: vid.mode });
     });
+    // each video model's form lists the lengths it accepts (a few at a time, to stay polite to the server)
+    const vids = out.filter((e) => e.kind === "video");
+    for (let i = 0; i < vids.length; i += 4)
+      await Promise.all(
+        vids.slice(i, i + 4).map(async (e) => {
+          try {
+            const f = parse<{ jsonSchema?: { properties?: Record<string, { enum?: unknown[]; minimum?: number; maximum?: number }> } }>(await call(pf, "openart_model_form_get", { model: e.native, mode: e.mode }));
+            const props = f?.jsonSchema?.properties || {};
+            const k = Object.keys(props).find((x) => /duration/i.test(x));
+            if (!k) return;
+            const d = props[k];
+            e.durations = uniq(d.enum ? nums(d.enum) : d.minimum && d.maximum ? range(Math.ceil(d.minimum), Math.floor(d.maximum)) : []);
+          } catch {
+            /* keep going without this model's lengths */
+          }
+        }),
+      );
     return out;
   }
   // ImagineArt lists its models inside the generate tools' descriptions; it publishes no prices, so estimates are used
   const out: CatalogEntry[] = [];
+  const lengths = durationTable(pf.tools.find((t) => t.name === "generate_video")?.description || "");
   for (const [tool, kind, est] of [["generate_image", "image", 10], ["generate_video", "video", 60]] as const) {
     const d = pf.tools.find((t) => t.name === tool)?.description || "";
     const list = d.match(/model \(optional\)[^\n]*?one of:([\s\S]*?)\.\s*\n/i)?.[1] || d.match(/model[^\n]*one of:([\s\S]*?)\n/i)?.[1] || "";
     [...list.matchAll(/"([a-zA-Z0-9.\-_]+)"/g)].forEach(([, id]) => {
       if (/edit$|kontext/.test(id)) return; // edit-only models need a source image
-      out.push({ native: id, name: id.replace(/-/g, " ").replace(/\b([a-z])/g, (c) => c.toUpperCase()).replace(/V(\d)/g, "v$1"), kind, credits: est });
+      out.push({ native: id, name: id.replace(/-/g, " ").replace(/\b([a-z])/g, (c) => c.toUpperCase()).replace(/V(\d)/g, "v$1"), kind, credits: est, durations: kind === "video" ? lengths[id] : undefined });
     });
   }
   return out;
@@ -125,7 +165,8 @@ function platformModel(id: string, e: CatalogEntry, pf: Platform): ModelDef {
     costPerSecond: 0,
     tier: "final",
     promptStyle: "prose",
-    maxDuration: e.kind === "video" ? 15 : 0,
+    maxDuration: e.kind === "video" ? Math.max(...(e.durations?.length ? e.durations : [10])) : 0,
+    durations: e.kind === "video" && e.durations?.length ? e.durations : undefined,
     enabled: true,
     builtin: false,
     blurb: `Offered by ${pf.name}`,
@@ -152,8 +193,14 @@ export async function syncCatalog(pf: Platform): Promise<number> {
       m = { ...m, blurb: `${m.blurb}, ${pf.name}` };
       models[models.findIndex((x) => x.id === m!.id)] = m;
     }
+    // a model's lengths are everything any of its platforms accepts; each platform still gets one it allows
+    if (e.kind === "video" && e.durations?.length) {
+      const all = uniq([...(m.durations || []), ...e.durations]);
+      m = { ...m, durations: all, maxDuration: Math.max(m.maxDuration || 0, ...all) };
+      models[models.findIndex((x) => x.id === m!.id)] = m;
+    }
     prices[m.id] = e.credits;
-    native[m.id] = { id: e.native, mode: e.mode, kind: e.kind };
+    native[m.id] = { id: e.native, mode: e.mode, kind: e.kind, durations: e.durations };
   });
   st.set({ models });
   st.update("platforms", (v) => v.map((q) => (q.id === pf.id ? { ...q, adapter, models: prices, nativeModels: native } : q)));
@@ -205,6 +252,7 @@ export async function renderOn(pf: Platform, req: RenderRequest, onLine: Line = 
   const nat = pf.nativeModels?.[req.modelId];
   if (!adapter) throw new Error(`${pf.name} has no render adapter`);
   if (!nat) throw new Error(`${pf.name} doesn't offer this model — reconnect it in Settings to refresh its model list.`);
+  if (req.kind === "video" && nat.durations?.length) req = { ...req, duration: nearest(req.duration || 5, nat.durations) };
   if (adapter === "flick") return flick(pf, nat.id, req, onLine);
   if (adapter === "openart") return openart(pf, nat.id, nat.mode || (req.kind === "image" ? "text2image" : "text2video"), req, onLine);
   if (adapter === "imagineart") return imagine(pf, nat.id, req, onLine);

@@ -11,7 +11,8 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Bars, Book, ChevronR, Close, Folder, Image as ImageIcon, Lock, Mic, Plus, Speaker, Spark, Wave } from "../Icons";
 import { Chip, Select, Slider } from "../ui";
-import { RouteSelector, ShotCard, Vault } from "./shared";
+import { durationOptions, RouteSelector, ShotCard, Vault } from "./shared";
+import { nearest } from "@/lib/adapters";
 import Preflight from "./Preflight";
 import { useHydrated } from "../Hydrate";
 
@@ -247,7 +248,7 @@ export default function CinemaStudio() {
             <div className="grid grid-cols-2 gap-2 shrink-0">
               <div className="rounded-12 bg-w5 px-3 py-2">
                 <span className="block text-12 text-w50 font-semibold">Duration</span>
-                <Select label="Duration" value={String(s.duration)} onChange={(v) => setS({ duration: Number(v) })} options={[3, 4, 5, 6, 8, 10, 12, 15].filter((d) => d <= (model.maxDuration || 30)).map((d) => ({ id: String(d), label: `${d}s` }))} />
+                <Select label="Duration" value={String(nearest(s.duration, durationOptions(model)))} onChange={(v) => setS({ duration: Number(v) })} options={durationOptions(model).map((d) => ({ id: String(d), label: `${d}s` }))} />
               </div>
               <div className="rounded-12 bg-w5 px-3 py-2">
                 <span className="block text-12 text-w50 font-semibold">Aspect Ratio</span>

@@ -6,6 +6,12 @@ import { artGradient, fileToDataUrl, uid } from "@/lib/util";
 import { Badge, Select } from "../ui";
 import { Copy, Film, Link, Plus, Rerun, Trash } from "../Icons";
 
+/** Clip lengths to offer for a video model: the exact ones its platforms accept, else common lengths up to its maximum (30 s at most). */
+export function durationOptions(m: { durations?: number[]; maxDuration?: number }) {
+  if (m.durations?.length) return m.durations.filter((d) => d <= 30);
+  return [3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30].filter((d) => d <= (m.maxDuration || 10));
+}
+
 export function aspectRatioCss(a: string) {
   const [w, h] = a.split(":").map(Number);
   return `${w} / ${h}`;

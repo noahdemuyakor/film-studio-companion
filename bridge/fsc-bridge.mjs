@@ -166,6 +166,68 @@ function importMedia(res, body) {
   send(res, 200, { file: `imports/${name}` });
 }
 
+/* ------------------------------- Pixmax ------------------------------- */
+// The Pixmax CLI (pixmax.cmd -> python launcher.py) can't be spawned without a shell, so the bridge runs its
+// launcher directly. Only these fixed, read-only or generate commands are reachable: no free-form arguments.
+function findPixmax() {
+  const roots = [join(process.env.APPDATA || "", "Python"), join(HOME, "AppData", "Roaming", "Python")];
+  for (const r of roots) {
+    if (!existsSync(r)) continue;
+    for (const d of readdirSync(r)) {
+      const cmd = join(r, d, "Scripts", "pixmax.cmd");
+      if (!existsSync(cmd)) continue;
+      const t = readFileSync(cmd, "utf8");
+      const home = t.match(/PIXMAX_CLI_HOME=([^"\r\n]+)/)?.[1];
+      const run = t.match(/"([^"]+python[^"]*\.exe)"\s+"([^"]+launcher\.py)"/i);
+      if (run) return { python: run[1], launcher: run[2], home };
+    }
+  }
+  return null;
+}
+const PIXMAX = findPixmax();
+const pmText = (v, max = 4000) => String(v ?? "").slice(0, max);
+const pmSafe = (v) => /^[A-Za-z0-9_.:-]{1,64}$/.test(String(v ?? ""));
+function runPixmax(res, body) {
+  if (!PIXMAX) return send(res, 404, { error: "Pixmax CLI not found. Install it from console.pixmax.ai/cli and run: pixmax auth login web" });
+  const a = body.action;
+  let args;
+  if (a === "status") args = ["--json", "auth", "login", "status"];
+  else if (a === "projects") args = ["--json", "project", "list"];
+  else if (a === "files" && pmSafe(body.project)) args = ["--json", "project", "files", "--project", body.project];
+  else if (a === "models" && /^GENERATE_(IMAGE|VIDEO)$/.test(body.type)) args = ["--json", "model", "search", "--type", body.type];
+  else if ((a === "image" || a === "video") && body.prompt && pmSafe(body.file) && (!body.model || pmSafe(body.model))) {
+    const label = `FSC ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
+    args = a === "image" ? ["--json", "image", "generate", label] : ["--json", "video", "text-to-video", label];
+    args.push("--file", body.file, "--prompt", pmText(body.prompt));
+    if (body.model) args.push("--model", body.model);
+    if (pmSafe(body.aspect)) args.push("--aspect-ratio", body.aspect);
+    if (pmSafe(body.resolution)) args.push("--resolution", body.resolution);
+    if (a === "video" && pmSafe(body.duration)) args.push("--duration", String(body.duration));
+    if (a === "image") args.push("--run");
+    args.push("--allow-failed", "--timeout", "1500");
+  } else return send(res, 400, { error: "Unsupported Pixmax request" });
+  const env = { ...process.env, PYTHONIOENCODING: "utf-8", ...(PIXMAX.home ? { PIXMAX_CLI_HOME: PIXMAX.home } : {}) };
+  const child = spawn(PIXMAX.python, [PIXMAX.launcher, ...args], { shell: false, env, cwd: OUT });
+  let out = "";
+  let err = "";
+  child.stdout.on("data", (d) => (out += d));
+  child.stderr.on("data", (d) => (err += d));
+  child.on("error", (e) => send(res, 500, { error: e.message }));
+  child.on("close", (code) => {
+    let json = null;
+    try {
+      json = JSON.parse(out);
+    } catch {
+      const m = out.match(/\{[\s\S]*\}\s*$/);
+      try {
+        json = m ? JSON.parse(m[0]) : null;
+      } catch {}
+    }
+    if (code !== 0 && !json) return send(res, 502, { error: (err || out || `pixmax exited with ${code}`).trim().slice(0, 600) });
+    send(res, 200, { code, result: json, raw: json ? undefined : out.slice(0, 4000) });
+  });
+}
+
 /* ----------------------------- stdio MCP ----------------------------- */
 const servers = new Map(); // id -> { child, pending: Map, buf }
 
@@ -221,10 +283,11 @@ http
     if (req.method === "OPTIONS") return send(res, 204, "");
     if (req.headers["x-bridge-token"] !== TOKEN && !req.url.startsWith("/files/")) return send(res, 401, { error: "bad or missing x-bridge-token" });
     try {
-      if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, version: VERSION, allowed: [...allowed], outputDir: OUT, claude: CLAUDE_BIN });
+      if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, version: VERSION, allowed: [...allowed], outputDir: OUT, claude: CLAUDE_BIN, pixmax: !!PIXMAX });
       if (req.method === "POST" && req.url === "/cli/run") return runCli(req, res, await readBody(req));
       if (req.method === "POST" && req.url === "/claude") return runClaude(res, await readBody(req));
       if (req.method === "POST" && req.url === "/media/import") return importMedia(res, await readBody(req));
+      if (req.method === "POST" && req.url === "/pixmax") return runPixmax(res, await readBody(req));
       const m = req.url.match(/^\/mcp\/([^/]+)\/rpc$/);
       if (req.method === "POST" && m) {
         const body = await readBody(req);
