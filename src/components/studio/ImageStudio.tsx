@@ -25,7 +25,7 @@ export default function ImageStudio() {
   const [refs, setRefs] = useState<PickedRef[]>([]);
   const imageModels = st.models.filter((m) => m.kind === "image" && m.enabled);
   const model = modelById(st.models, st.imageModelId);
-  const price = usePrice(model, 0);
+  const price = usePrice(model, 0, res);
 
   const [hint, setHint] = useState("");
   const [large, setLarge] = useState(false);

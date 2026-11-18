@@ -122,7 +122,7 @@ export async function produceShot(input: ProduceInput, onStage?: (s: Shot["statu
   };
   try {
     const st = useStudio.getState();
-    const plan = input.plan || (await planRoute(model, input.routeMode || st.routeMode, input.lockId ?? st.lockPlatform, duration));
+    const plan = input.plan || (await planRoute(model, input.routeMode || st.routeMode, input.lockId ?? st.lockPlatform, duration, settings.resolution));
     if (plan.blocked) return { ...base, credits: 0, route: plan.reason, status: "error", error: plan.blocked };
     const pf = plan.platformId ? useStudio.getState().platforms.find((x) => x.id === plan.platformId) : undefined;
     // references from everywhere: wired/picked images, the first frame, Vault references and cast face anchors

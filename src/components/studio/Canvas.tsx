@@ -263,7 +263,7 @@ function MediaNode({ id, data, selected }: NodeProps) {
   const [full, setFull] = useState(false);
   const [msg, setMsg] = useState("");
   const play = st.canvasPrefs.playOnHover;
-  const cost = usePrice(model, duration || 5);
+  const cost = usePrice(model, duration || 5, resolution);
   const live = st.liveRenders;
   const defW = kind === "voice" ? 260 : aspect === "9:16" || aspect === "3:4" ? 200 : aspect === "1:1" ? 240 : 300;
   const w = Number(data.w) || defW;

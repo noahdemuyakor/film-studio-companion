@@ -262,7 +262,7 @@ export interface Platform {
   /** per-platform choices the adapter needs: Flick project, ImagineArt organization */
   adapterConfig?: { projectId?: string; projectName?: string; orgId?: string };
   /** registry model id -> this platform's own model id (and OpenArt mode) */
-  nativeModels?: Record<string, { id: string; mode?: string; kind: ModelKind; durations?: number[]; resolutions?: string[] }>;
+  nativeModels?: Record<string, { id: string; mode?: string; kind: ModelKind; durations?: number[]; resolutions?: string[]; baseRes?: string; resNative?: Record<string, string> }>;
 }
 
 export interface LedgerEntry {

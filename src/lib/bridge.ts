@@ -9,7 +9,7 @@ import type { LedgerEntry, McpTool, MediaInput, ModelDef, Platform, RouteMode, R
 import { getPath, uid } from "./util";
 import { estimateCost } from "./router";
 import { callClaude, claudeSource } from "./engine";
-import { detectAdapter, renderOn } from "./adapters";
+import { detectAdapter, estimateOn, quoteOn, renderOn } from "./adapters";
 
 /* ------------------------------ MCP client ------------------------------ */
 
@@ -275,12 +275,12 @@ export async function syncBalance(pf: Platform): Promise<number | null> {
 
 /* ------------------------------ Credit router ------------------------------ */
 
-export function routeLocal(model: ModelDef, mode: RouteMode, lockId: string, platforms: Platform[], duration = 5): RoutePlan {
+export function routeLocal(model: ModelDef, mode: RouteMode, lockId: string, platforms: Platform[], duration = 5, resolution?: string): RoutePlan {
   const alternatives = platforms
     .filter((pf) => pf.enabled && pf.models[model.id] !== undefined)
     .map((pf) => {
-      // prices are per ~5 s of video; PixVerse bills by the second, others charge at least a 5 s clip
-      const cost = Math.max(1, Math.round(pf.models[model.id] * (model.kind === "video" ? (pf.adapter === "pixverse" ? duration / 5 : Math.max(1, duration / 5)) : 1)));
+      // this platform's price at the chosen length and resolution
+      const cost = estimateOn(pf, model.id, model.kind, duration, resolution) ?? 0;
       const ok = pf.balance - cost >= pf.threshold;
       return { platformId: pf.id, cost, ok, why: ok ? `${pf.balance} credits available` : `only ${pf.balance} credits (reserve ${pf.threshold})` };
     })
@@ -311,12 +311,25 @@ export function routeLocal(model: ModelDef, mode: RouteMode, lockId: string, pla
   return { platformId: null, cost: estimateCost(model, duration), reason: alternatives.length ? "No linked platform has enough credits — using the model's own API key from the registry" : "No linked platform hosts this model — using the registry endpoint", failover: alternatives.length > 0, alternatives };
 }
 
-export async function planRoute(model: ModelDef, mode: RouteMode, lockId: string, duration = 5): Promise<RoutePlan> {
+/** Swap the chosen platform's estimate for its own exact quote, where it gives one for free. */
+async function withQuote(plan: RoutePlan, model: ModelDef, duration: number, resolution?: string): Promise<RoutePlan> {
+  const pf = plan.platformId ? useStudio.getState().platforms.find((x) => x.id === plan.platformId) : undefined;
+  if (!pf) return plan;
+  const q = await quoteOn(pf, model.id, model.kind, duration, resolution);
+  if (q === null || q === plan.cost) return plan;
+  const ok = pf.balance - q >= pf.threshold;
+  const alternatives = plan.alternatives.map((a) => (a.platformId === pf.id ? { ...a, cost: q, ok } : a));
+  if (!ok)
+    return { ...plan, cost: q, alternatives, platformId: null, blocked: `${pf.name} quotes ${q} credits at this resolution and length; it has ${pf.balance} and you keep ${pf.threshold} in reserve — lower the resolution or length, or pick another platform.`, reason: `${pf.name} quote: ${q} cr` };
+  return { ...plan, cost: q, alternatives, reason: `${plan.reason.replace(/\(\d+ cr\)/, "")}(${q} cr, ${pf.name}'s own quote)` };
+}
+
+export async function planRoute(model: ModelDef, mode: RouteMode, lockId: string, duration = 5, resolution?: string): Promise<RoutePlan> {
   const st = useStudio.getState();
   // refresh live balances first, where a platform exposes them
   await Promise.all(st.platforms.filter((p) => p.enabled && p.status === "connected").map(syncBalance));
   const fresh = useStudio.getState().platforms;
-  const local = routeLocal(model, mode, lockId, fresh, duration);
+  const local = await withQuote(routeLocal(model, mode, lockId, fresh, duration, resolution), model, duration, resolution);
   const t0 = performance.now();
   // a platform the person chose (or a blocked choice) needs no Claude call: there is nothing to decide
   if (claudeSource() === "none" || local.alternatives.length < 2 || mode === "lock" || local.blocked) {
@@ -333,7 +346,7 @@ export async function planRoute(model: ModelDef, mode: RouteMode, lockId: string
     const pick = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
     const alt = local.alternatives.find((a) => a.platformId === pick.platformId);
     st.log({ task: `Credit router → ${model.name}`, mode: "live", model: st.claudeModel, ms: Math.round(performance.now() - t0), ok: true, note: pick.reason });
-    if (alt && alt.ok) return { ...local, platformId: alt.platformId, cost: alt.cost, reason: pick.reason, failover: local.failover };
+    if (alt && alt.ok) return withQuote({ ...local, platformId: alt.platformId, cost: alt.cost, reason: pick.reason, failover: local.failover }, model, duration, resolution);
     return local;
   } catch (e) {
     st.log({ task: `Credit router → ${model.name}`, mode: "local", model: "local engine", ms: Math.round(performance.now() - t0), ok: false, note: `Claude unavailable: ${e instanceof Error ? e.message : e}` });

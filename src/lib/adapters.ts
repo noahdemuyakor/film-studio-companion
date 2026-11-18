@@ -54,6 +54,8 @@ async function call(pf: Platform, name: string, args: Record<string, unknown>): 
 
 export interface CatalogEntry {
   native: string;
+  baseRes?: string; // the resolution the listed price is for (prices of other resolutions are scaled from it)
+  resNative?: Record<string, string>; // shown resolution -> the platform's own value (OpenArt "std"/"pro")
   name: string;
   kind: ModelKind;
   credits: number; // per image, or per ~5 s of video
@@ -75,6 +77,9 @@ const resHeight = (r: string) => {
   return k ? ({ 1: 1024, 2: 1440, 4: 2160, 8: 4320 } as Record<string, number>)[k[1]] || Number(k[1]) * 540 : 0;
 };
 const isRes = (r: string) => resHeight(r) > 0;
+/** OpenArt (Kling) names its tiers instead of resolutions: std = 720p, pro = 1080p */
+const TIER_RES: Record<string, string> = { std: "720p", standard: "720p", pro: "1080p", professional: "1080p", hd: "720p", fhd: "1080p", uhd: "4K" };
+const tierRes = (v: string) => TIER_RES[String(v).toLowerCase()] || String(v);
 const uniqRes = (a: string[]) => [...new Set(a.map(normRes).filter(isRes))].sort((x, y) => resHeight(x) - resHeight(y));
 /** the platform's own spelling of the resolution closest to the one asked for */
 export function pickRes(want: string | undefined, allowed?: string[]): string | undefined {
@@ -164,7 +169,13 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
             const f = parse<{ jsonSchema?: { properties?: Record<string, { enum?: unknown[]; minimum?: number; maximum?: number }> } }>(await call(pf, "openart_model_form_get", { model: e.native, mode: e.mode }));
             const props = f?.jsonSchema?.properties || {};
             const rk = Object.keys(props).find((x) => /^resolution$/i.test(x)) || Object.keys(props).find((x) => /resolution/i.test(x));
-            if (rk && props[rk].enum) e.resolutions = props[rk].enum!.map(String).filter(isRes);
+            if (rk && props[rk].enum) {
+              const raw = props[rk].enum!.map(String);
+              e.resNative = Object.fromEntries(raw.filter((x) => isRes(tierRes(x))).map((x) => [normRes(tierRes(x)), x]));
+              e.resolutions = Object.keys(e.resNative);
+              const def = (props[rk] as { default?: unknown }).default;
+              e.baseRes = def !== undefined ? normRes(tierRes(String(def))) : e.resolutions[0];
+            }
             const k = Object.keys(props).find((x) => /duration/i.test(x));
             if (!k || e.kind !== "video") return;
             const d = props[k];
@@ -252,7 +263,9 @@ export async function syncCatalog(pf: Platform): Promise<number> {
       models[models.findIndex((x) => x.id === m!.id)] = m;
     }
     prices[m.id] = e.credits;
-    native[m.id] = { id: e.native, mode: e.mode, kind: e.kind, durations: e.durations, resolutions: e.resolutions };
+    // the listed price's resolution: given by the platform, else its cheapest (Flick lists "from" prices) or its first
+    const baseRes = e.baseRes || (e.resolutions?.length ? (pf.adapter === "pixverse" || detectAdapter(pf) === "pixverse" ? pickRes("720p", e.resolutions) : uniqRes(e.resolutions)[0]) : undefined);
+    native[m.id] = { id: e.native, mode: e.mode, kind: e.kind, durations: e.durations, resolutions: e.resolutions, baseRes, resNative: e.resNative };
   });
   st.set({ models });
   st.update("platforms", (v) => v.map((q) => (q.id === pf.id ? { ...q, adapter, models: prices, nativeModels: native } : q)));
@@ -442,7 +455,7 @@ async function openart(pf: Platform, model: string, mode: string, req: RenderReq
   }
   const res = pick(/^resolution$/i) || pick(/resolution/i);
   if (res && req.resolution) {
-    const hit = props[res].enum?.find((x) => normRes(String(x)) === normRes(req.resolution!));
+    const hit = props[res].enum?.find((x) => normRes(tierRes(String(x))) === normRes(req.resolution!));
     if (hit !== undefined || !props[res].enum) params[res] = hit ?? req.resolution;
   }
   // reference fields: whatever this mode's form calls them (image / images / referenceImages / startFrame…)
@@ -857,4 +870,107 @@ async function pixverse(pf: Platform, model: string, mode: string, req: RenderRe
     if (!status && !url && i > 2 && /error/i.test(s._text)) throw new Error(`PixVerse: ${s._text.slice(0, 200)}`);
   }
   throw new Error(`PixVerse is still rendering task ${id}: it will appear in your PixVerse library.`);
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Prices that follow resolution and length                            */
+/* ------------------------------------------------------------------ */
+
+/** How a price scales between two resolutions: roughly with picture area (platform quotes win where they exist). */
+export function resFactor(from?: string, to?: string): number {
+  const a = resHeight(from || ""), b = resHeight(to || "");
+  if (!a || !b || a === b) return 1;
+  return Math.pow((b * b) / (a * a), 0.85);
+}
+
+// PixVerse's published API prices for its own models, audio off (credits per second; V5.6 per clip of 5/8/10 s)
+const PV_PER_SEC: Record<string, Record<string, number>> = {
+  v6: { "360p": 5, "540p": 7, "720p": 9, "1080p": 18 },
+  "pixverse-c1": { "360p": 6, "540p": 8, "720p": 10, "1080p": 19 },
+};
+const PV_V56: Record<number, Record<string, number>> = {
+  5: { "360p": 35, "480p": 35, "540p": 35, "720p": 45, "1080p": 75 },
+  8: { "360p": 70, "480p": 70, "540p": 70, "720p": 90, "1080p": 150 },
+  10: { "360p": 77, "480p": 77, "540p": 77, "720p": 99 },
+};
+
+/**
+ * What one render costs on a platform at this length and resolution, without asking it.
+ * Listed prices are per image or per ~5 s of video at the model's listed resolution; PixVerse bills by the second.
+ */
+export function estimateOn(pf: Platform, modelId: string, kind: ModelKind, duration: number, resolution?: string): number | undefined {
+  const base = pf.models[modelId];
+  if (base === undefined) return undefined;
+  const nat = pf.nativeModels?.[modelId];
+  const res = nat ? pickRes(resolution, nat.resolutions) : undefined;
+  const pixverse = (pf.adapter || detectAdapter(pf)) === "pixverse";
+  if (pixverse && kind === "video" && nat) {
+    const r = normRes(res || nat.baseRes || "720p");
+    const sec = Math.max(1, Math.round(duration || 5));
+    if (PV_PER_SEC[nat.id]?.[r]) return Math.max(1, Math.round(PV_PER_SEC[nat.id][r] * sec));
+    if (nat.id === "v5.6") {
+      const row = PV_V56[sec <= 5 ? 5 : sec <= 8 ? 8 : 10];
+      if (row?.[r]) return row[r];
+    }
+  }
+  const len = kind === "video" ? (pixverse ? (duration || 5) / 5 : Math.max(1, (duration || 5) / 5)) : 1;
+  // models loaded before prices tracked resolution: assume the listed price is for the cheapest resolution
+  const baseRes = nat?.baseRes || (nat?.resolutions?.length ? uniqRes(nat.resolutions)[0] : undefined);
+  return Math.max(1, Math.round(base * len * resFactor(baseRes, res)));
+}
+
+/* Free exact quotes, where a platform offers them (Flick dry_run, OpenArt model cost). Cached per configuration. */
+const quoteCache = new Map<string, Promise<number | null>>();
+let flickFrame: Promise<string | undefined> | undefined;
+
+/** An existing image in the Flick project, needed only so Flick will quote a video (nothing is generated). */
+function flickAnyImage(pf: Platform): Promise<string | undefined> {
+  const project_id = pf.adapterConfig?.projectId;
+  if (!project_id) return Promise.resolve(undefined);
+  flickFrame ||= call(pf, "get_project", { project_id })
+    .then((t) => parse<{ boards?: { media?: { media_id: string; kind: string }[] }[]; loose_media?: { media_id: string; kind: string }[] }>(t))
+    .then((j) => [...(j?.boards || []).flatMap((b) => b.media || []), ...(j?.loose_media || [])].find((m) => m.kind === "image")?.media_id)
+    .catch(() => undefined);
+  return flickFrame;
+}
+
+export function quoteOn(pf: Platform, modelId: string, kind: ModelKind, duration: number, resolution?: string): Promise<number | null> {
+  const nat = pf.nativeModels?.[modelId];
+  const adapter = pf.adapter || detectAdapter(pf);
+  if (!nat || pf.status !== "connected" || (adapter !== "flick" && adapter !== "openart")) return Promise.resolve(null);
+  const res = pickRes(resolution, nat.resolutions);
+  const dur = kind === "video" ? nearest(Math.round(duration || 5), nat.durations) : 0;
+  const key = `${pf.id}|${nat.id}|${nat.mode || ""}|${kind}|${dur}|${res || ""}`;
+  if (!quoteCache.has(key)) {
+    const p = (async (): Promise<number | null> => {
+      try {
+        if (adapter === "flick") {
+          const project_id = pf.adapterConfig?.projectId;
+          if (!project_id) return null;
+          const settings = res ? { settings: { resolution: res } } : {};
+          const t =
+            kind === "image"
+              ? await call(pf, "generate_image", { prompt: "price check", model: nat.id, project_id, count: 1, dry_run: true, ...settings })
+              : await (async () => {
+                  const frame = await flickAnyImage(pf);
+                  return frame ? call(pf, "generate_video", { prompt: "price check", model: nat.id, project_id, start_frame_media_id: frame, duration: String(dur), dry_run: true, ...settings }) : "";
+                })();
+          const n = parse<{ credits_total?: number; dry_run?: boolean }>(t);
+          return n?.dry_run && typeof n.credits_total === "number" ? n.credits_total : null;
+        }
+        const params: Record<string, unknown> = {};
+        if (kind === "video") params.duration = dur;
+        if (res) params.resolution = nat.resNative?.[normRes(res)] ?? res;
+        const t = await call(pf, "openart_model_cost", { model: nat.id, mode: nat.mode || (kind === "image" ? "text2image" : "text2video"), params });
+        const n = parse<{ items?: { totalCredits?: number }[] }>(t)?.items?.[0]?.totalCredits;
+        return typeof n === "number" ? n : null;
+      } catch {
+        return null; // a quote that can't be had falls back to the estimate
+      }
+    })();
+    quoteCache.set(key, p);
+    p.then((v) => v === null && quoteCache.delete(key));
+  }
+  return quoteCache.get(key)!;
 }

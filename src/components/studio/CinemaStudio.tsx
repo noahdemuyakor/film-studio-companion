@@ -88,7 +88,7 @@ export default function CinemaStudio() {
   const videoModels = st.models.filter((m) => m.kind === "video" && m.enabled);
   const setS = (p: Partial<CinemaSettings>) => st.set({ settings: { ...s, ...p } });
   const total = Math.min(30, s.duration + extend.back + extend.fwd);
-  const est = usePrice(model, total);
+  const est = usePrice(model, total, s.resolution);
   const prevShot = st.shots.find((x) => x.id === st.firstFrame);
   const firstRef = st.vault.find((r) => r.id === st.firstFrame);
   const endRef = st.vault.find((r) => r.id === st.endFrame);
@@ -142,7 +142,7 @@ export default function CinemaStudio() {
   const generate = async () => {
     if (st.routeMode === "preflight") {
       setBusy(true);
-      const plan = await planRoute(model, "preflight", st.lockPlatform, total);
+      const plan = await planRoute(model, "preflight", st.lockPlatform, total, s.resolution);
       setBusy(false);
       setPending({ plan, lines: [{ label: st.prompt.slice(0, 60) || "Untitled shot", model, plan }] });
       return;

@@ -254,8 +254,8 @@ export default function DramaStudio() {
     const plans = new Map<string, RoutePlan>();
     const lines = [];
     for (const s of shots) {
-      const key = `${model.id}|${mode}|${st.lockPlatform}|${st.settings.duration}`;
-      if (!plans.has(key)) plans.set(key, await planRoute(model, mode, st.lockPlatform, st.settings.duration));
+      const key = `${model.id}|${mode}|${st.lockPlatform}|${st.settings.duration}|${st.settings.resolution}`;
+      if (!plans.has(key)) plans.set(key, await planRoute(model, mode, st.lockPlatform, st.settings.duration, st.settings.resolution));
       lines.push({ label: s.title, model, plan: plans.get(key)!, shot: s });
     }
     setBatchMsg("");

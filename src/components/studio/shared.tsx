@@ -1,7 +1,8 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStudio, VAULT_LIMIT, modelById } from "@/lib/store";
 import { routeLocal } from "@/lib/bridge";
+import { quoteOn } from "@/lib/adapters";
 import { estimateCost } from "@/lib/router";
 import type { ModelDef, RefKind, RouteMode, Shot } from "@/lib/types";
 import { artGradient, fileToDataUrl, uid } from "@/lib/util";
@@ -439,12 +440,30 @@ export function RefPicker({
   );
 }
 
-/** What a render will cost on the platform that will run it: the one chosen under "Pay with", or the cheapest on Auto. */
-export function usePrice(model: ModelDef | undefined, duration = 5): number {
+/**
+ * What a render will cost on the platform that will run it (the one chosen under "Pay with", or the cheapest on Auto),
+ * at the chosen length and resolution: the platform's own free quote where it gives one (Flick, OpenArt), else an estimate.
+ */
+export function usePrice(model: ModelDef | undefined, duration = 5, resolution?: string): number {
   const routeMode = useStudio((x) => x.routeMode);
   const lock = useStudio((x) => x.lockPlatform);
   const platforms = useStudio((x) => x.platforms);
-  if (!model) return 0;
-  const plan = routeLocal(model, routeMode === "lock" ? "lock" : "cheapest", lock, platforms, duration);
-  return plan.platformId ? plan.cost : plan.alternatives.find((a) => a.platformId === lock)?.cost ?? estimateCost(model, duration);
+  const plan = model ? routeLocal(model, routeMode === "lock" ? "lock" : "cheapest", lock, platforms, duration, resolution) : null;
+  const pfId = plan?.platformId || (routeMode === "lock" ? lock : "");
+  const estimate = !model || !plan ? 0 : plan.platformId ? plan.cost : plan.alternatives.find((a) => a.platformId === lock)?.cost ?? estimateCost(model, duration);
+  const [quote, setQuote] = useState<{ key: string; n: number } | null>(null);
+  const key = `${pfId}|${model?.id}|${duration}|${resolution}`;
+  useEffect(() => {
+    const pf = platforms.find((x) => x.id === pfId);
+    if (!model || !pf) return;
+    let live = true;
+    // wait for the settings to stop changing before asking the platform
+    const t = setTimeout(() => quoteOn(pf, model.id, model.kind, duration, resolution).then((n) => live && n !== null && setQuote({ key, n })), 400);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return quote?.key === key ? quote.n : estimate;
 }
