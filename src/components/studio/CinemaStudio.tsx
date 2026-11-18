@@ -15,6 +15,7 @@ import { durationOptions, nearestRes, RefPicker, resolutionOptions, RouteSelecto
 import { nearest } from "@/lib/adapters";
 import Preflight from "./Preflight";
 import { useHydrated } from "../Hydrate";
+import { ResizeHandle, usePanelSize } from "../Resize";
 
 type Tab = "create" | "optics" | "continuity";
 
@@ -76,6 +77,7 @@ export default function CinemaStudio() {
   const [firstPick, setFirstPick] = useState<PickedRef[]>([]);
   const [refPicks, setRefPicks] = useState<PickedRef[]>([]);
   const [sheet, setSheet] = useState(false);
+  const [leftW, setLeftW] = usePanelSize("cinema-left", 320, 260, 560);
   const [preview, setPreview] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<{ lines: PreflightLine[]; plan: RoutePlan } | null>(null);
@@ -204,17 +206,12 @@ export default function CinemaStudio() {
               </button>
             </div>
             {refMode === "refs" ? (
-              <button onClick={() => setTab("continuity")} className="shrink-0 h-[166px] rounded-12 border border-dashed border-w10 bg-w5 flex flex-col items-center justify-center gap-2">
-                <span className="flex -space-x-1.5">
-                  {[ImageIcon, Wave, Speaker].map((I, k) => (
-                    <span key={k} className="w-8 h-8 rounded-full bg-[#36404a] border border-w10 grid place-items-center">
-                      <I size={12} />
-                    </span>
-                  ))}
-                </span>
-                <span className="text-14 font-semibold mt-2">{st.refIds.length ? `${st.refIds.length} references linked` : "Add references"}</span>
-                <span className="text-12 text-mute">Image, Video or Audio · up to 50</span>
-              </button>
+              <div className="shrink-0 flex flex-col gap-1">
+                <RefPicker variant="zone" refs={refPicks} onChange={setRefPicks} max={10} drop="down" />
+                <button onClick={() => setTab("continuity")} className="self-start text-12 text-w50 hover:text-white px-1">
+                  {st.refIds.length ? `+ ${st.refIds.length} locked Vault reference${st.refIds.length > 1 ? "s" : ""} (Continuity)` : "Lock characters and styles in Continuity →"}
+                </button>
+              </div>
             ) : (
               <div className="shrink-0 rounded-12 bg-w5 p-3 flex flex-col gap-3">
                 <Slider label="Extend backward" min={0} max={Math.max(0, 30 - s.duration - extend.fwd)} value={extend.back} onChange={(v) => setExtend({ ...extend, back: v })} display={`${extend.back}s`} />
@@ -225,11 +222,7 @@ export default function CinemaStudio() {
             <div className="shrink-0 rounded-12 bg-w5 p-3 flex flex-col gap-2 text-12">
               <div className="flex items-center gap-2">
                 <span className="w-20 shrink-0 font-semibold text-w60">First frame</span>
-                <RefPicker refs={firstPick} onChange={setFirstPick} max={1} label="First frame" drop="down" />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-20 shrink-0 font-semibold text-w60">References</span>
-                <RefPicker refs={refPicks} onChange={setRefPicks} max={10} drop="down" />
+                <RefPicker refs={firstPick} onChange={setFirstPick} max={1} label="First frame" drop="down" imagesOnly />
               </div>
             </div>
             <div className="shrink-0 rounded-12 bg-w5 p-3">
@@ -411,7 +404,10 @@ export default function CinemaStudio() {
 
   return (
     <div className="flex gap-2 md:h-[calc(100vh-84px)] md:min-h-[600px] px-2 md:px-4 md:pb-[38px] pb-24">
-      <aside className={`${sheet ? "fixed inset-0 z-50 p-2 bg-ink" : "hidden"} md:static md:block md:w-[320px] md:shrink-0 md:p-0`}>{left}</aside>
+      <aside className={`${sheet ? "fixed inset-0 z-50 p-2 bg-ink" : "hidden"} md:relative md:block md:w-[var(--pw)] md:shrink-0 md:p-0`} style={{ "--pw": `${leftW}px` } as React.CSSProperties}>
+        {left}
+        <ResizeHandle label="Resize settings panel" size={leftW} setSize={setLeftW} def={320} min={260} max={560} className="hidden md:block absolute top-0 bottom-0 -right-2" />
+      </aside>
       <div className="flex-1 min-w-0 rounded-16 border border-w10 flex flex-col overflow-hidden min-h-[720px] md:min-h-0">
         <header className="flex items-center gap-3 mx-2.5 pt-2 pb-3">
         <nav aria-label="Panel" className="flex items-center gap-1.5">

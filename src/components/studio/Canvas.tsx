@@ -29,6 +29,7 @@ import {
 import { modelById, useStudio } from "@/lib/store";
 import { breakdownScript, callClaude, claudeSource } from "@/lib/engine";
 import { estimateCost, produceShot } from "@/lib/router";
+import { bridgeHeaders } from "@/lib/bridge";
 import { LIGHTING } from "@/lib/presets";
 import type { MediaInput, ModelDef, RouteMode, Shot } from "@/lib/types";
 import { artGradient, fileToDataUrl, uid } from "@/lib/util";
@@ -67,6 +68,7 @@ import { Select } from "../ui";
 import { durationOptions, nearestRes, PayWith, Preview, RefPicker, resolutionOptions, RouteSelector, usePrice, type PickedRef } from "./shared";
 import Timeline from "./Timeline";
 import { useHydrated } from "../Hydrate";
+import { ResizeHandle, usePanelSize } from "../Resize";
 
 type D = Record<string, unknown>;
 type MediaKind = "image" | "video" | "voice";
@@ -74,12 +76,43 @@ type MediaKind = "image" | "video" | "voice";
 function patchNode(id: string, data: D) {
   useStudio.getState().update("nodes", (ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...data } } : n)));
 }
+/** Drag the right edge of a canvas node to change its width; the width is saved on the node. */
+function NodeWidthHandle({ id, w, def, min = 180, max = 900 }: { id: string; w: number; def: number; min?: number; max?: number }) {
+  const rf = useReactFlow();
+  return <ResizeHandle label="Resize node" size={w} setSize={(n) => patchNode(id, { w: n })} def={def} min={min} max={max} scale={() => rf.getZoom()} className="absolute top-3 bottom-3 -right-1" />;
+}
 function removeNode(id: string) {
   const st = useStudio.getState();
   st.update("nodes", (ns) => ns.filter((n) => n.id !== id));
   st.update("edges", (es) => es.filter((e) => e.source !== id && e.target !== id));
 }
-const isVideoUrl = (u?: string) => !!u && /\.(mp4|webm|mov)(\?|$)/i.test(u);
+const isVideoUrl = (u?: string) => !!u && (u.startsWith("data:video/") || u.startsWith("blob:") || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u));
+
+/**
+ * Turn an uploaded or dropped file into a URL the canvas can keep. Small images stay inline (data: URL).
+ * Videos and large images are stored by the local bridge and served from it, so they survive a reload
+ * without filling the browser's storage. Without the bridge, a video lasts until the page is reloaded.
+ */
+async function keepMedia(src: File | string): Promise<{ url: string; type: string; note?: string }> {
+  const type = typeof src === "string" ? src.match(/^data:([^;,]+)/)?.[1] || (isVideoUrl(src) ? "video/mp4" : "image/*") : src.type;
+  if (typeof src !== "string" && src.size > 25 * 1024 * 1024) throw new Error(`${src.name} is over 25 MB`);
+  const inline = typeof src === "string" ? src : await fileToDataUrl(src, 1536);
+  if (!inline.startsWith("data:")) return { url: inline, type };
+  if (type.startsWith("image/") && inline.length < 1.5e6) return { url: inline, type };
+  const st = useStudio.getState();
+  try {
+    const res = await fetch(`${st.bridgeUrl}/media/keep`, { method: "POST", headers: { "content-type": "application/json", ...(await bridgeHeaders()) }, body: JSON.stringify({ src: inline }) });
+    const j = await res.json().catch(() => ({}));
+    if (res.ok && j.file) return { url: `${st.bridgeUrl}/files/${j.file}`, type };
+    throw new Error(j.error || `bridge said ${res.status}`);
+  } catch (e) {
+    if (type.startsWith("video/")) {
+      const blob = await (await fetch(inline)).blob();
+      return { url: URL.createObjectURL(blob), type, note: `Kept until reload: start the local bridge to keep videos (${e instanceof Error ? e.message : e}).` };
+    }
+    return { url: inline, type };
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* Sections                                                            */
@@ -136,8 +169,9 @@ function SectionNode({ id, data, selected }: NodeProps) {
 /* ------------------------------------------------------------------ */
 
 function TextNode({ id, data, selected }: NodeProps) {
+  const tw = Number(data.w) || 260;
   return (
-    <div className={`w-[260px] rounded-12 bg-[#f4efe2] text-[#1b2024] shadow-xl ${selected ? "ring-2 ring-[#8db600]" : ""}`}>
+    <div style={{ width: tw }} className={`relative rounded-12 bg-[#f4efe2] text-[#1b2024] shadow-xl ${selected ? "ring-2 ring-[#8db600]" : ""}`}>
       <div className="flex items-center gap-1.5 px-3 pt-2 text-[11px] font-semibold text-[#1b2024]/60">
         <Note size={11} /> Text note
         <span className="flex-1" />
@@ -175,7 +209,8 @@ function useInputs(id: string, kind: MediaKind, mode?: string) {
         return { node: n, url, native: shot?.platformId && shot.nativeId ? { platformId: shot.platformId, id: shot.nativeId } : undefined };
       })
       .filter((x) => x.url);
-    const media: MediaInput[] = imgs.map((x, i) => ({ role: kind === "video" && mode !== "reference" && i === 0 ? "first" : "ref", url: x.url, native: x.native }));
+    const firstImg = imgs.findIndex((x) => !isVideoUrl(x.url) && !String((x.node.data.upload as { type?: string } | undefined)?.type || "").startsWith("video"));
+    const media: MediaInput[] = imgs.map((x, i) => ({ role: kind === "video" && mode !== "reference" && i === firstImg ? "first" : "ref", url: x.url, native: x.native }));
     return { text, media, thumbs: imgs.map((x) => ({ id: x.node.id, url: x.url! })) };
   }, [edges, nodes, id, kind, mode]);
 }
@@ -229,7 +264,9 @@ function MediaNode({ id, data, selected }: NodeProps) {
   const play = st.canvasPrefs.playOnHover;
   const cost = usePrice(model, duration || 5);
   const live = st.liveRenders;
-  const w = kind === "voice" ? 260 : aspect === "9:16" || aspect === "3:4" ? 200 : aspect === "1:1" ? 240 : 300;
+  const defW = kind === "voice" ? 260 : aspect === "9:16" || aspect === "3:4" ? 200 : aspect === "1:1" ? 240 : 300;
+  const w = Number(data.w) || defW;
+  const [promptW, setPromptW] = usePanelSize("canvas-prompt-panel", 440, 340, 820);
   // Flick has no upload tool: it can only use references that were themselves made on Flick
   const payPf = st.routeMode === "lock" ? st.platforms.find((p) => p.id === st.lockPlatform) : undefined;
   const nonFlick = payPf?.adapter === "flick" && inputs.media.some((m) => m.native?.platformId !== payPf.id);
@@ -265,11 +302,19 @@ function MediaNode({ id, data, selected }: NodeProps) {
   };
 
   /** a picked/uploaded reference becomes an image node to the left, wired into this one */
-  const addRefNode = (r: PickedRef) => {
+  const addRefNode = async (r: PickedRef, k: number) => {
     const self = rf.getNode(id)!;
     const nid = uid("n");
-    const n = inputs.thumbs.length;
-    useStudio.getState().update("nodes", (ns) => [...ns, { id: nid, type: "media", position: { x: self.position.x - 260, y: self.position.y + n * 140 }, data: { kind: "image", title: r.name.replace(/\.[^.]+$/, ""), upload: { url: r.url, name: r.name, type: "image/*" }, aspect: "1:1" } }]);
+    const n = inputs.thumbs.length + k;
+    let kept: { url: string; type: string; note?: string };
+    try {
+      kept = await keepMedia(r.url);
+    } catch (e) {
+      return setMsg(e instanceof Error ? e.message : String(e));
+    }
+    if (kept.note) setMsg(kept.note);
+    const video = kept.type.startsWith("video");
+    useStudio.getState().update("nodes", (ns) => [...ns, { id: nid, type: "media", position: { x: self.position.x - 260, y: self.position.y + n * 140 }, data: { kind: video ? "video" : "image", title: r.name.replace(/\.[^.]+$/, ""), upload: { url: kept.url, name: r.name, type: kept.type }, aspect: video ? "16:9" : "1:1" } }]);
     useStudio.getState().update("edges", (es) => [...es, { id: uid("e"), source: nid, target: id }]);
   };
 
@@ -298,7 +343,8 @@ function MediaNode({ id, data, selected }: NodeProps) {
   };
 
   return (
-    <div style={{ width: w }} className="group">
+    <div style={{ width: w }} className="group relative">
+      <NodeWidthHandle id={id} w={w} def={defW} min={160} max={1200} />
       <Handle type="target" position={Position.Left} style={{ background: "#8db600" }} />
       <div className="flex items-center gap-1 mb-1 text-12 text-w60">
         <KindIcon kind={kind} size={11} />
@@ -430,7 +476,8 @@ function MediaNode({ id, data, selected }: NodeProps) {
 
       {/* prompt panel */}
       <NodeToolbar isVisible={selected} position={Position.Bottom} offset={12}>
-        <div className="w-[440px] rounded-12 bg-[#1b2024] border border-w10 shadow-2xl p-3 flex flex-col gap-2 text-12">
+        <div style={{ width: promptW }} className="relative rounded-12 bg-[#1b2024] border border-w10 shadow-2xl p-3 flex flex-col gap-2 text-12">
+          <ResizeHandle label="Resize prompt panel" size={promptW} setSize={setPromptW} def={440} min={340} max={820} className="absolute top-3 bottom-3 -right-1" />
           {kind !== "voice" && (
             <div className="flex flex-wrap items-center gap-1.5">
               <Chip>
@@ -454,7 +501,7 @@ function MediaNode({ id, data, selected }: NodeProps) {
           {kind !== "voice" && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-w50">{kind === "video" && mode !== "reference" ? "First frame & refs" : "References"}</span>
-              <RefPicker refs={[]} onChange={(rs) => rs.forEach((r) => addRefNode(r))} max={Math.max(0, 10 - inputs.thumbs.length)} />
+              <RefPicker refs={[]} onChange={(rs) => rs.forEach((r, k) => addRefNode(r, k))} max={Math.max(0, 10 - inputs.thumbs.length)} imagesOnly={kind === "image"} />
               {inputs.thumbs.slice(0, 8).map((t) =>
                 isVideoUrl(t.url) ? (
                   <video key={t.id} src={t.url} muted className="w-9 h-9 rounded-6 object-cover" />
@@ -519,9 +566,10 @@ const MenuItem = ({ onClick, children, sub }: { onClick: () => void; children: R
 /* Earlier node types, kept so existing canvases still open             */
 /* ------------------------------------------------------------------ */
 
-function Shell({ title, icon, color, children, id, inputs = true, outputs = true }: { title: string; icon: React.ReactNode; color: string; children: React.ReactNode; id: string; inputs?: boolean; outputs?: boolean }) {
+function Shell({ title, icon, color, children, id, inputs = true, outputs = true, defW = 300 }: { title: string; icon: React.ReactNode; color: string; children: React.ReactNode; id: string; inputs?: boolean; outputs?: boolean; defW?: number }) {
+  const sw = useStudio((s) => Number(s.nodes.find((n) => n.id === id)?.data.w)) || defW;
   return (
-    <div className="w-[300px] rounded-16 bg-[#262d32] border border-w10 shadow-2xl text-white">
+    <div style={{ width: sw }} className="relative rounded-16 bg-[#262d32] border border-w10 shadow-2xl text-white">
       {inputs && <Handle type="target" position={Position.Left} style={{ background: color }} />}
       <div className="flex items-center gap-2 px-3 h-9 border-b border-w5">
         <span className="w-5 h-5 rounded-6 grid place-items-center text-dark" style={{ background: color }}>
@@ -654,8 +702,8 @@ function CompareNode({ id, data }: NodeProps) {
     patchNode(id, { modelIds: [...new Set(next)] });
   };
   return (
-    <div className="w-[560px]">
-      <Shell id={id} title="Compare models side by side" icon={<Spark size={11} />} color="#b28dff" outputs={false}>
+    <div>
+      <Shell id={id} title="Compare models side by side" icon={<Spark size={11} />} color="#b28dff" outputs={false} defW={560}>
         <textarea aria-label="Comparison prompt" value={String(data.prompt || "")} onChange={(e) => patchNode(id, { prompt: e.target.value })} className="nodrag nowheel h-[48px] rounded-8 bg-w5 p-2 outline-none resize-none" />
         <div className="grid grid-cols-4 gap-1 nodrag">
           {[0, 1, 2, 3].map((i) => (
@@ -766,6 +814,7 @@ function applyActions(actions: AssistantAction[], at: { x: number; y: number }):
 function Assistant({ onClose }: { onClose: () => void }) {
   const st = useStudio();
   const rf = useReactFlow();
+  const [aw, setAw] = usePanelSize("canvas-assistant", 340, 260, 720);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const end = useRef<HTMLDivElement>(null);
@@ -810,7 +859,8 @@ Use one section per scene or idea; to add to a section that's already on the can
     setBusy(false);
   };
   return (
-    <aside className="w-[340px] shrink-0 border-l border-w5 bg-[#1f2529] flex flex-col min-h-0">
+    <aside style={{ width: aw }} className="relative shrink-0 border-l border-w5 bg-[#1f2529] flex flex-col min-h-0">
+      <ResizeHandle label="Resize Claude assistant" size={aw} setSize={setAw} def={340} min={260} max={720} dir={-1} className="absolute top-0 bottom-0 -left-1" />
       <div className="h-10 px-3 flex items-center gap-2 border-b border-w5 text-12">
         <Brain size={13} className="text-lime" />
         <span className="font-semibold flex-1">Claude assistant</span>
@@ -886,6 +936,8 @@ function Board() {
   const { zoom } = useViewport();
   const [hand, setHand] = useState(false);
   const [panel, setPanel] = useState<"" | "add" | "video" | "assets" | "settings" | "zoom">("");
+  const [assetsW, setAssetsW] = usePanelSize("canvas-assets", 280, 220, 560);
+  const [setW, setSetW] = usePanelSize("canvas-settings", 260, 220, 480);
   const [q, setQ] = useState("");
   const file = useRef<HTMLInputElement>(null);
   const prefs = (p: Partial<typeof canvasPrefs>) => st.set({ canvasPrefs: { ...canvasPrefs, ...p } });
@@ -895,8 +947,8 @@ function Board() {
   const onConnect = useCallback((c: Connection) => update("edges", (es) => addEdge({ ...c }, es)), [update]);
 
   const center = () => rf.screenToFlowPosition({ x: window.innerWidth / 2 - (canvasPrefs.assistantOpen ? 170 : 0), y: window.innerHeight / 2.6 });
-  const add = (type: string, data: D, style?: Node["style"]) => {
-    const c = center();
+  const add = (type: string, data: D, style?: Node["style"], at?: { x: number; y: number }) => {
+    const c = at ? { x: at.x + 120, y: at.y + 80 } : center();
     const id = uid("n");
     update("nodes", (ns) => [...ns.map((n) => ({ ...n, selected: false })), { id, type, position: { x: c.x - 120 + Math.random() * 40, y: c.y - 80 + Math.random() * 40 }, data, selected: true, ...(type === "section" ? { zIndex: -1, style: style || { width: 760, height: 420 } } : {}) }]);
     setPanel("");
@@ -904,11 +956,24 @@ function Board() {
   };
   const addSection = () => add("section", { title: `Section ${nodes.filter((n) => n.type === "section").length + 1}`, color: SECTION_COLORS[nodes.filter((n) => n.type === "section").length % SECTION_COLORS.length] });
   const addText = () => add("text", { text: "" });
-  const onUpload = async (f?: File) => {
-    if (!f) return;
-    if (f.size > 4 * 1024 * 1024 && f.type.startsWith("image")) return alert("Images up to 4 MB can be kept on the canvas.");
-    const url = f.type.startsWith("video") ? URL.createObjectURL(f) : await fileToDataUrl(f, 1536);
-    add("media", { kind: f.type.startsWith("video") ? "video" : "image", title: f.name.replace(/\.[^.]+$/, ""), upload: { url, name: f.name, type: f.type }, aspect: "16:9" });
+  const [dropping, setDropping] = useState(false);
+  const [dropNote, setDropNote] = useState("");
+  const onUpload = async (files?: FileList | File[] | null, at?: { x: number; y: number }) => {
+    const list = [...(files || [])];
+    const media = list.filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
+    const notes: string[] = [];
+    if (list.length > media.length) notes.push(`${list.length - media.length} file(s) skipped: only images and videos go on the canvas.`);
+    for (const [k, f] of media.entries()) {
+      try {
+        const kept = await keepMedia(f);
+        if (kept.note) notes.push(kept.note);
+        const video = f.type.startsWith("video");
+        add("media", { kind: video ? "video" : "image", title: f.name.replace(/\.[^.]+$/, ""), upload: { url: kept.url, name: f.name, type: f.type }, aspect: video ? "16:9" : "1:1" }, undefined, at ? { x: at.x + k * 40, y: at.y + k * 40 } : undefined);
+      } catch (e) {
+        notes.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+    setDropNote([...new Set(notes)].join(" "));
   };
 
   /** lay every section's members out in a neat grid, and loose nodes in a row below */
@@ -970,7 +1035,35 @@ function Board() {
 
   return (
     <div className="flex flex-1 min-h-0">
-      <div className="relative flex-1 min-w-0">
+      <div
+        className="relative flex-1 min-w-0"
+        onDragOver={(e) => {
+          if (![...e.dataTransfer.types].includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setDropping(true);
+        }}
+        onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as globalThis.Node | null) && setDropping(false)}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDropping(false);
+          onUpload(e.dataTransfer.files, rf.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+        }}
+      >
+        {dropping && (
+          <div className="pointer-events-none absolute inset-2 z-40 rounded-16 border-2 border-dashed border-lime bg-lime/10 grid place-items-center">
+            <span className="rounded-10 bg-black/70 px-4 py-2 text-14 font-semibold">Drop images or videos to add them to the canvas</span>
+          </div>
+        )}
+        {dropNote && (
+          <div role="status" className="absolute left-1/2 -translate-x-1/2 bottom-4 z-40 max-w-[560px] rounded-10 bg-[#1b2024] border border-w10 px-3 py-2 text-12 flex items-center gap-3 shadow-2xl">
+            {dropNote}
+            <button aria-label="Dismiss" onClick={() => setDropNote("")} className="text-w50 hover:text-white">
+              ✕
+            </button>
+          </div>
+        )}
         <ReactFlow
           nodes={nodes}
           edges={shownEdges}
@@ -1069,11 +1162,12 @@ function Board() {
             )}
           </div>
         )}
-        <input ref={file} type="file" accept="image/*,video/*" hidden onChange={(e) => (onUpload(e.target.files?.[0]), (e.target.value = ""))} />
+        <input ref={file} type="file" accept="image/*,video/*" multiple hidden onChange={(e) => (onUpload(e.target.files), (e.target.value = ""))} />
 
         {/* assets */}
         {panel === "assets" && (
-          <div className="absolute left-16 top-4 bottom-4 z-20 w-[280px] rounded-12 bg-[#1f2529] border border-w10 shadow-2xl flex flex-col">
+          <div style={{ width: assetsW }} className="absolute left-16 top-4 bottom-4 z-20 rounded-12 bg-[#1f2529] border border-w10 shadow-2xl flex flex-col">
+            <ResizeHandle label="Resize assets panel" size={assetsW} setSize={setAssetsW} def={280} min={220} max={560} className="absolute top-0 bottom-0 -right-1" />
             <div className="h-10 px-3 flex items-center gap-2 border-b border-w5 text-12 font-semibold">
               Assets
               <span className="flex-1" />
@@ -1117,7 +1211,8 @@ function Board() {
 
         {/* settings */}
         {panel === "settings" && (
-          <div className="absolute left-16 top-1/2 -translate-y-1/2 z-20 w-[260px] rounded-12 bg-[#1f2529] border border-w10 shadow-2xl p-3 flex flex-col gap-3 text-12">
+          <div style={{ width: setW }} className="absolute left-16 top-1/2 -translate-y-1/2 z-20 rounded-12 bg-[#1f2529] border border-w10 shadow-2xl p-3 flex flex-col gap-3 text-12">
+            <ResizeHandle label="Resize canvas settings" size={setW} setSize={setSetW} def={260} min={220} max={480} className="absolute top-0 bottom-0 -right-1" />
             <div>
               <p className="font-semibold mb-1.5">Lines between nodes</p>
               <div className="grid grid-cols-3 gap-1 p-0.5 rounded-8 bg-w5">

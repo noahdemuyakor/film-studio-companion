@@ -20,7 +20,7 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSION = "1.0.0";
@@ -173,6 +173,7 @@ function importMedia(res, body) {
 const REFS = join(OUT, "refs");
 mkdirSync(REFS, { recursive: true });
 const MAX_REF = 25 * 1024 * 1024;
+const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav" };
 async function refBytes(src) {
   const s = String(src || "");
   const m = s.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
@@ -180,7 +181,13 @@ async function refBytes(src) {
     const buf = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]));
     return { buf, type: m[1] || "application/octet-stream" };
   }
-  if (!/^https:\/\//i.test(s)) throw new Error("Only data: or https: images can be used as references");
+  const own = s.match(/^http:\/\/(?:127\.0\.0\.1|localhost):(\d+)\/files\/([^?#]+)/i);
+  if (own && Number(own[1]) === PORT) {
+    const p = resolve(OUT, decodeURIComponent(own[2]));
+    if (!p.startsWith(OUT + sep) || !existsSync(p)) throw new Error("That bridge file no longer exists");
+    return { buf: readFileSync(p), type: MIME[extname(p).toLowerCase()] || "application/octet-stream" };
+  }
+  if (!/^https:\/\//i.test(s)) throw new Error("Only data:, https: or this bridge's own files can be used as references");
   const r = await fetch(s, { redirect: "follow" });
   if (!r.ok) throw new Error(`Couldn't download the reference (${r.status})`);
   const buf = Buffer.from(await r.arrayBuffer());
@@ -197,6 +204,13 @@ async function refRoute(res, url, body) {
     return send(res, 200, { path: p, type, size: buf.length });
   }
   if (url === "/media/bytes") return send(res, 200, { base64: buf.toString("base64"), type, size: buf.length });
+  if (url === "/media/keep") {
+    const dir = join(OUT, "uploads");
+    mkdirSync(dir, { recursive: true });
+    const name = `${randomBytes(9).toString("base64url")}${extOf(type, body.src)}`;
+    writeFileSync(join(dir, name), buf);
+    return send(res, 200, { file: `uploads/${name}`, type, size: buf.length });
+  }
   if (url === "/media/put") {
     // presigned upload (OpenArt): only https URLs, bytes exactly as given
     if (!/^https:\/\//i.test(String(body.signUrl || ""))) return send(res, 400, { error: "signUrl must be https" });
@@ -353,7 +367,7 @@ http
       if (req.method === "POST" && req.url === "/claude") return runClaude(res, await readBody(req));
       if (req.method === "POST" && req.url === "/media/import") return importMedia(res, await readBody(req));
       if (req.method === "POST" && req.url === "/pixmax") return runPixmax(res, await readBody(req));
-      if (req.method === "POST" && ["/media/save", "/media/bytes", "/media/put"].includes(req.url)) return await refRoute(res, req.url, await readBody(req));
+      if (req.method === "POST" && ["/media/save", "/media/bytes", "/media/put", "/media/keep"].includes(req.url)) return await refRoute(res, req.url, await readBody(req));
       const m = req.url.match(/^\/mcp\/([^/]+)\/rpc$/);
       if (req.method === "POST" && m) {
         const body = await readBody(req);
@@ -364,8 +378,8 @@ http
       const f = req.url.match(/^\/files\/(.+)$/);
       if (req.method === "GET" && f) {
         const p = resolve(OUT, decodeURIComponent(f[1]));
-        if (!p.startsWith(OUT) || !existsSync(p)) return send(res, 404, { error: "not found" });
-        res.writeHead(200, { ...cors });
+        if (!p.startsWith(OUT + sep) || !existsSync(p)) return send(res, 404, { error: "not found" });
+        res.writeHead(200, { ...cors, "content-type": MIME[extname(p).toLowerCase()] || "application/octet-stream" });
         return createReadStream(p).pipe(res);
       }
       send(res, 404, { error: "unknown route" });

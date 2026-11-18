@@ -15,6 +15,7 @@ import Timeline from "./Timeline";
 import Preflight from "./Preflight";
 import { RouteSelector } from "./shared";
 import { useHydrated } from "../Hydrate";
+import { ResizeHandle, usePanelSize } from "../Resize";
 
 const EMO_COLOR: Record<string, string> = { Dread: "#b28dff", Confrontation: "#ff5c9a", Resolve: "#8db600", Longing: "#7cc4ff", Joy: "#ffd25c", Curiosity: "#ffb347", Neutral: "#888" };
 /** Colour for any emotion label, including free text such as "Suspense and guilt": nearest of the fixed emotions by keyword. */
@@ -117,6 +118,8 @@ function CastEditor({ c }: { c: CastMember }) {
 
 export default function DramaStudio() {
   const st = useStudio();
+  const [leftW, setLeftW] = usePanelSize("drama-left", 260, 200, 480);
+  const [rightW, setRightW] = usePanelSize("drama-right", 340, 260, 560);
   const hydrated = useHydrated();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -287,9 +290,10 @@ export default function DramaStudio() {
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-36px)]">
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)_340px] gap-2 p-2">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[var(--dl)_minmax(0,1fr)_var(--dr)] gap-2 p-2" style={{ "--dl": `${leftW}px`, "--dr": `${rightW}px` } as React.CSSProperties}>
         {/* episodes + cast list */}
-        <aside className="rounded-16 bg-[#262d32] border border-w5 p-3 flex flex-col gap-4">
+        <aside className="relative rounded-16 bg-[#262d32] border border-w5 p-3 flex flex-col gap-4">
+          <ResizeHandle label="Resize episodes panel" size={leftW} setSize={setLeftW} def={260} min={200} max={480} className="hidden lg:block absolute top-0 bottom-0 -right-[9px]" />
           <div>
             <div className="flex items-center justify-between">
               <h2 className="text-14 font-semibold">My projects</h2>
@@ -476,7 +480,8 @@ export default function DramaStudio() {
         </section>
 
         {/* cast editor */}
-        <aside className="rounded-16 bg-[#262d32] border border-w5 p-3">
+        <aside className="relative rounded-16 bg-[#262d32] border border-w5 p-3">
+          <ResizeHandle label="Resize cast panel" size={rightW} setSize={setRightW} def={340} min={260} max={560} dir={-1} className="hidden lg:block absolute top-0 bottom-0 -left-[9px]" />
           <h2 className="text-14 font-semibold mb-3">Cast profile</h2>
           {cSel ? <CastEditor key={cSel.id} c={cSel} /> : <p className="text-12 text-w50">Add a character to start.</p>}
           <div className="mt-4 rounded-12 bg-w5 p-2.5 text-12">

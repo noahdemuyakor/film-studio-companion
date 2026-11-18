@@ -5,12 +5,14 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { Bars, Book, ChevronR, Folder, Image as ImageIcon, Minus, Music, Plus, Sliders, Wave } from "../Icons";
 import { Select } from "../ui";
+import { ResizeHandle, usePanelSize } from "../Resize";
 
 type Take = { id: string; text: string; voice: string; castId?: string; rate: number; pitch: number; at: number };
 
 /** Text to speech for dialogue tracks. Uses the browser's speech engine as the local voice model. */
 export default function AudioStudio() {
   const st = useStudio();
+  const [leftW, setLeftW] = usePanelSize("audio-left", 352, 280, 560);
   const [tab, setTab] = useState<"tts" | "change" | "translate">("tts");
   const [script, setScript] = useState("");
   const [details, setDetails] = useState("");
@@ -160,7 +162,10 @@ export default function AudioStudio() {
 
   return (
     <div className="flex flex-col md:flex-row gap-6 px-4 pt-1 h-[calc(100vh-112px)] md:h-[calc(100vh-84px)] lg:h-[calc(100vh-44px)]">
-      <aside className="md:w-[352px] md:shrink-0 h-full pb-4">{left}</aside>
+      <aside className="relative md:w-[var(--pw)] md:shrink-0 h-full pb-4" style={{ "--pw": `${leftW}px` } as React.CSSProperties}>
+        {left}
+        <ResizeHandle label="Resize voice panel" size={leftW} setSize={setLeftW} def={352} min={280} max={560} className="hidden md:block absolute top-0 bottom-4 -right-4" />
+      </aside>
       <div className="hidden md:flex flex-1 min-w-0 flex-col gap-2 pb-4">
         <div className="flex items-center gap-1.5">
           <button onClick={() => setPanel("history")} className={`h-9 px-3 rounded-8 text-12 font-semibold flex items-center gap-1.5 border border-w10 ${panel === "history" ? "bg-w10" : "text-w60"}`}>

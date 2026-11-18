@@ -134,7 +134,7 @@ export default function ImageStudio() {
           }} placeholder="Describe the scene you imagine" className="w-full h-10 bg-transparent resize-none outline-none text-14 px-1.5 pt-1 placeholder:text-w50" />
           {hint && <p className="text-12 text-[#ff5c9a] px-1.5">{hint}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <RefPicker refs={refs} onChange={setRefs} />
+            <RefPicker refs={refs} onChange={setRefs} imagesOnly />
             <div className="relative">
               <button type="button" aria-label="Mention a cast member" title="Add a cast member to the prompt" aria-expanded={mentionOpen} onClick={() => setMentionOpen(!mentionOpen)} className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
                 <At size={14} />

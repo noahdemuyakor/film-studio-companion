@@ -305,7 +305,9 @@ async function bridgePost<T>(path: string, body: Record<string, unknown>): Promi
 }
 const refFile = (src: string) => bridgePost<{ path: string; type: string }>("/media/save", { src });
 const refBytes = (src: string) => bridgePost<{ base64: string; type: string; size: number }>("/media/bytes", { src });
-const usable = (m: MediaInput) => !!m.url && /^(data:|https:)/.test(m.url);
+// data: URLs, web files, and files this computer's bridge serves (canvas uploads, Google Flow results)
+const usable = (m: MediaInput) => !!m.url && /^(data:|https:|http:\/\/(127\.0\.0\.1|localhost):\d+\/files\/)/.test(m.url);
+const isVideoUrl = (u: string) => u.startsWith("data:video/") || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u);
 
 export interface RenderResult {
   url: string;
@@ -474,7 +476,9 @@ async function imagine(pf: Platform, model: string, req: RenderRequest, onLine: 
   const org_id = await imagineOrg(pf);
   onLine(`ImagineArt: ${model}`);
   // web images can be passed as URLs; local ones (and every image, for Seedance models) are uploaded to ImagineArt first
-  const ordered = [...(req.media || []).filter((m) => m.role === "first"), ...(req.media || []).filter((m) => m.role === "ref")].filter(usable).slice(0, 4);
+  const all = [...(req.media || []).filter((m) => m.role === "first"), ...(req.media || []).filter((m) => m.role === "ref")].filter(usable);
+  const ordered = all.filter((m) => !isVideoUrl(m.url!)).slice(0, 4);
+  if (all.length > ordered.length && all.some((m) => isVideoUrl(m.url!))) onLine("ImagineArt takes image references only: video references were left out. Use OpenArt for video references.");
   const mustUpload = /seedance/i.test(model);
   const image_url: string[] = [];
   for (const m of ordered) {

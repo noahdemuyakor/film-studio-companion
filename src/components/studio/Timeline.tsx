@@ -5,6 +5,7 @@ import type { Clip, TrackId } from "@/lib/types";
 import { artGradient, clamp, downloadBlob, downloadText, fmtTime, uid } from "@/lib/util";
 import { ChevronD, Download, Film, Mic, Music, Pause, Play, Plus, Trash, Wave } from "../Icons";
 import { Select } from "../ui";
+import { ResizeHandle, usePanelSize } from "../Resize";
 
 const TRACKS: { id: TrackId; label: string; icon: typeof Film; color: string }[] = [
   { id: "video", label: "Video", icon: Film, color: "#8db600" },
@@ -41,7 +42,8 @@ export default function Timeline({ docked = true }: { docked?: boolean }) {
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [sel, setSel] = useState<string | null>(null);
-  const [height, setHeight] = useState(300);
+  const [height, setHeight] = usePanelSize("timeline-height", 300, 180, 640);
+  const [monW, setMonW] = usePanelSize("timeline-monitor", 220, 160, 480);
   const [rendering, setRendering] = useState(0);
   const lane = useRef<HTMLDivElement>(null);
   const total = useMemo(() => Math.max(10, ...clips.map((c) => c.start + c.duration)), [clips]);
@@ -175,17 +177,7 @@ export default function Timeline({ docked = true }: { docked?: boolean }) {
   return (
     <div id="timeline" className="border-t border-w10 bg-[#232a2f] flex flex-col" style={{ height: docked ? height : undefined }}>
       {docked && (
-        <div
-          className="h-1.5 cursor-row-resize hover:bg-lime/40"
-          onPointerDown={(e) => {
-            const y0 = e.clientY;
-            const h0 = height;
-            const mv = (ev: PointerEvent) => setHeight(clamp(h0 - (ev.clientY - y0), 180, 640));
-            const up = () => (window.removeEventListener("pointermove", mv), window.removeEventListener("pointerup", up));
-            window.addEventListener("pointermove", mv);
-            window.addEventListener("pointerup", up);
-          }}
-        />
+        <ResizeHandle label="Resize timeline" axis="y" dir={-1} size={height} setSize={setHeight} def={300} min={180} max={640} className="w-full" />
       )}
       <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-w5 text-12">
         <span className="font-semibold flex items-center gap-1.5">
@@ -226,7 +218,8 @@ export default function Timeline({ docked = true }: { docked?: boolean }) {
         </div>
       </div>
       <div className="flex-1 min-h-0 flex">
-        <div className="hidden md:flex w-[220px] shrink-0 p-2 flex-col gap-2 border-r border-w5">
+        <div className="relative hidden md:flex shrink-0 p-2 flex-col gap-2 border-r border-w5" style={{ width: monW }}>
+          <ResizeHandle label="Resize timeline monitor" size={monW} setSize={setMonW} def={220} min={160} max={480} className="absolute top-0 bottom-0 -right-1" />
           <div className="relative aspect-video rounded-8 overflow-hidden" style={{ background: vClip ? artGradient(vClip.seed) : "#000" }}>
             {vClip && <span className="absolute left-1.5 top-1 text-[10px] font-semibold">{vClip.label}</span>}
             {burn && sub && <span className="absolute inset-x-2 bottom-1.5 text-center text-[10px] font-semibold bg-black/60 rounded-[3px] px-1 leading-4">{sub}</span>}

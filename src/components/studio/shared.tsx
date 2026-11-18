@@ -267,77 +267,174 @@ export interface PickedRef {
   name: string;
 }
 
-/** Up to `max` reference images: upload from the computer, or pick a render or a Vault item. */
-export function RefPicker({ refs, onChange, max = 10, label = "References", drop = "up" }: { refs: PickedRef[]; onChange: (r: PickedRef[]) => void; max?: number; label?: string; drop?: "up" | "down" }) {
+const VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|#|$)/i;
+/** True when a reference URL points at a video (data: URL or file link). */
+export const isVideoRef = (url: string) => url.startsWith("data:video/") || VIDEO_RE.test(url);
+const MAX_VIDEO_MB = 25; // the bridge accepts references up to 25 MB
+
+/** Thumbnail for an image or video reference. */
+function RefThumb({ url, name, className }: { url: string; name: string; className: string }) {
+  return isVideoRef(url) ? (
+    <video src={url} muted playsInline preload="metadata" title={name} className={className} />
+  ) : (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={url} alt={name} title={name} className={className} />
+  );
+}
+
+/**
+ * Up to `max` references (images, and videos unless `imagesOnly`): upload or drag and drop from the computer,
+ * or pick a render or a Vault item. `variant="zone"` shows a large drop zone instead of the small + button.
+ */
+export function RefPicker({
+  refs,
+  onChange,
+  max = 10,
+  label = "References",
+  drop = "up",
+  imagesOnly = false,
+  variant = "button",
+}: {
+  refs: PickedRef[];
+  onChange: (r: PickedRef[]) => void;
+  max?: number;
+  label?: string;
+  drop?: "up" | "down";
+  imagesOnly?: boolean;
+  variant?: "button" | "zone";
+}) {
   const st = useStudio();
   const [open, setOpen] = useState(false);
+  const [over, setOver] = useState(false);
+  const [note, setNote] = useState("");
   const file = useRef<HTMLInputElement>(null);
+  const accept = imagesOnly ? "image/*" : "image/*,video/*";
+  const full = refs.length >= max;
   const addAll = (more: PickedRef[]) => onChange([...refs, ...more.filter((m) => !refs.some((r) => r.url === m.url))].slice(0, max));
-  const upload = async (files: FileList | null) => {
-    const list = [...(files || [])].filter((f) => f.type.startsWith("image/")).slice(0, max - refs.length);
+  const upload = async (files: FileList | File[] | null) => {
+    const all = [...(files || [])];
+    const ok = all.filter((f) => f.type.startsWith("image/") || (!imagesOnly && f.type.startsWith("video/")));
+    const big = ok.filter((f) => f.type.startsWith("video/") && f.size > MAX_VIDEO_MB * 1024 * 1024);
+    const list = ok.filter((f) => !big.includes(f)).slice(0, max - refs.length);
+    const skipped = all.length - ok.length;
+    setNote(
+      [
+        skipped ? `${skipped} file(s) skipped: ${imagesOnly ? "images only here" : "images and videos only"}.` : "",
+        big.length ? `${big.length} video(s) over ${MAX_VIDEO_MB} MB skipped.` : "",
+        ok.length - big.length > list.length ? `Only ${max} allowed.` : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
     addAll(await Promise.all(list.map(async (f) => ({ id: uid("ref"), url: await fileToDataUrl(f, 1536), name: f.name }))));
     setOpen(false);
   };
-  const renders = [...st.images, ...st.shots].filter((s) => s.status === "done" && s.resultUrl && !/\.(mp4|webm|mov)(\?|$)/i.test(s.resultUrl)).slice(0, 24);
+  const dnd = {
+    onDragOver: (e: React.DragEvent) => {
+      if (![...e.dataTransfer.types].includes("Files")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = full ? "none" : "copy";
+      setOver(true);
+    },
+    onDragLeave: () => setOver(false),
+    onDrop: (e: React.DragEvent) => {
+      if (!e.dataTransfer.files.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOver(false);
+      if (!full) upload(e.dataTransfer.files);
+    },
+  };
+  const renders = [...st.images, ...st.shots].filter((s) => s.status === "done" && s.resultUrl && (!imagesOnly || !isVideoRef(s.resultUrl))).slice(0, 24);
   const vault = st.vault.filter((v) => v.dataUrl && v.kind !== "audio");
+  const kindsText = imagesOnly ? "images" : "images or videos";
+
+  const chips = refs.map((r) => (
+    <span key={r.id} className="relative group/ref shrink-0">
+      <RefThumb url={r.url} name={r.name} className={`${variant === "zone" ? "w-12 h-12" : "w-8 h-8"} rounded-6 object-cover border border-w10`} />
+      {isVideoRef(r.url) && <span className="absolute left-0.5 bottom-0.5 text-[8px] font-bold bg-black/70 rounded-[3px] px-0.5">VID</span>}
+      <button type="button" aria-label={`Remove ${r.name}`} onClick={() => onChange(refs.filter((x) => x.id !== r.id))} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#1b2024] border border-w20 grid place-items-center text-[9px] opacity-0 group-hover/ref:opacity-100 focus:opacity-100">
+        ✕
+      </button>
+    </span>
+  ));
+
+  const menu = open && (
+    <div className={`absolute ${drop === "up" ? "bottom-full mb-2" : "top-full mt-2"} left-0 z-30 w-[300px] rounded-12 bg-[#1b2024] border border-w10 shadow-2xl p-2 flex flex-col gap-2 text-12`}>
+      <div className="flex items-center justify-between">
+        <span className="font-semibold">
+          {label} · {refs.length} of {max}
+        </span>
+        <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="text-w50">
+          ✕
+        </button>
+      </div>
+      <button type="button" onClick={() => file.current?.click()} className="h-9 rounded-8 bg-lime text-dark font-semibold">
+        Upload {kindsText} from your computer
+      </button>
+      <p className="text-[11px] text-w50 -mt-1">Or drag and drop {kindsText} onto the {variant === "zone" ? "box" : "+ button"}.</p>
+      {renders.length > 0 && (
+        <div>
+          <p className="text-w50 mb-1">From your renders</p>
+          <div className="grid grid-cols-6 gap-1">
+            {renders.map((s) => (
+              <button type="button" key={s.id} onClick={() => addAll([{ id: uid("ref"), url: s.resultUrl!, name: s.title }])} className="aspect-square rounded-6 overflow-hidden border border-w10 hover:border-lime">
+                <RefThumb url={s.resultUrl!} name={s.title} className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {vault.length > 0 && (
+        <div>
+          <p className="text-w50 mb-1">From the Vault</p>
+          <div className="grid grid-cols-6 gap-1">
+            {vault.map((v) => (
+              <button type="button" key={v.id} onClick={() => addAll([{ id: uid("ref"), url: v.dataUrl!, name: v.name }])} className="aspect-square rounded-6 overflow-hidden border border-w10 hover:border-lime" title={v.name}>
+                <RefThumb url={v.dataUrl!} name={v.name} className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="text-[10px] text-w40 leading-4">Only use photos of yourself, or of people who agreed. Flick can only use media made on Flick; Pixmax uses the first reference; video references need a model that takes them.</p>
+    </div>
+  );
+  const input = <input ref={file} type="file" accept={accept} multiple={max > 1} hidden onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />;
+
+  if (variant === "zone")
+    return (
+      <div className="relative shrink-0" {...dnd}>
+        <div className={`rounded-12 border border-dashed p-3 flex flex-col items-center justify-center gap-2 min-h-[150px] transition-colors ${over ? "border-lime bg-lime/10" : "border-w10 bg-w5"}`}>
+          {refs.length > 0 && <div className="flex flex-wrap gap-2 justify-center">{chips}</div>}
+          <span className="text-14 font-semibold">{over ? "Drop to add" : refs.length ? `${refs.length} of ${max} references` : `Add ${label.toLowerCase()}`}</span>
+          <span className="text-12 text-mute text-center">Drag and drop {kindsText} here, or</span>
+          <div className="flex gap-1.5">
+            <button type="button" disabled={full} onClick={() => file.current?.click()} className="h-8 px-3 rounded-8 bg-lime text-dark text-12 font-semibold disabled:opacity-40">
+              Upload
+            </button>
+            <button type="button" disabled={full} onClick={() => setOpen(!open)} className="h-8 px-3 rounded-8 bg-w10 text-12 font-semibold disabled:opacity-40">
+              Renders &amp; Vault
+            </button>
+          </div>
+          {note && <span className="text-[11px] text-[#ff5c9a] text-center">{note}</span>}
+        </div>
+        {input}
+        {menu}
+      </div>
+    );
+
   return (
-    <div className="relative flex items-center gap-1.5">
-      <button type="button" aria-label={`Add ${label.toLowerCase()}`} title={`${label} (${refs.length} of ${max})`} disabled={refs.length >= max} onClick={() => setOpen(!open)} className="h-8 min-w-8 px-2 rounded-8 bg-w5 flex items-center gap-1 text-12 font-semibold disabled:opacity-40">
+    <div className={`relative flex items-center gap-1.5 flex-wrap rounded-8 ${over ? "ring-2 ring-lime" : ""}`} {...dnd}>
+      <button type="button" aria-label={`Add ${label.toLowerCase()}`} title={`${label} (${refs.length} of ${max}): click, or drop ${kindsText} here`} disabled={full} onClick={() => setOpen(!open)} className="h-8 min-w-8 px-2 rounded-8 bg-w5 flex items-center gap-1 text-12 font-semibold disabled:opacity-40">
         <Plus size={14} />
         {refs.length > 0 && <span>{refs.length}</span>}
       </button>
-      {refs.map((r) => (
-        <span key={r.id} className="relative group/ref">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={r.url} alt={r.name} title={r.name} className="w-8 h-8 rounded-6 object-cover border border-w10" />
-          <button type="button" aria-label={`Remove ${r.name}`} onClick={() => onChange(refs.filter((x) => x.id !== r.id))} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#1b2024] border border-w20 grid place-items-center text-[9px] opacity-0 group-hover/ref:opacity-100">
-            ✕
-          </button>
-        </span>
-      ))}
-      <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
-      {open && (
-        <div className={`absolute ${drop === "up" ? "bottom-full mb-2" : "top-full mt-2"} left-0 z-30 w-[300px] rounded-12 bg-[#1b2024] border border-w10 shadow-2xl p-2 flex flex-col gap-2 text-12`}>
-          <div className="flex items-center justify-between">
-            <span className="font-semibold">
-              {label} · {refs.length} of {max}
-            </span>
-            <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="text-w50">
-              ✕
-            </button>
-          </div>
-          <button type="button" onClick={() => file.current?.click()} className="h-9 rounded-8 bg-lime text-dark font-semibold">
-            Upload images from your computer
-          </button>
-          {renders.length > 0 && (
-            <div>
-              <p className="text-w50 mb-1">From your renders</p>
-              <div className="grid grid-cols-6 gap-1">
-                {renders.map((s) => (
-                  <button type="button" key={s.id} onClick={() => addAll([{ id: uid("ref"), url: s.resultUrl!, name: s.title }])} className="aspect-square rounded-6 overflow-hidden border border-w10 hover:border-lime">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={s.resultUrl} alt={s.title} className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {vault.length > 0 && (
-            <div>
-              <p className="text-w50 mb-1">From the Vault</p>
-              <div className="grid grid-cols-6 gap-1">
-                {vault.map((v) => (
-                  <button type="button" key={v.id} onClick={() => addAll([{ id: uid("ref"), url: v.dataUrl!, name: v.name }])} className="aspect-square rounded-6 overflow-hidden border border-w10 hover:border-lime" title={v.name}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={v.dataUrl} alt={v.name} className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <p className="text-[10px] text-w40 leading-4">Only use photos of yourself, or of people who agreed. Flick can only use images made on Flick; Pixmax uses the first reference.</p>
-        </div>
-      )}
+      {chips}
+      {note && <span className="text-[11px] text-[#ff5c9a]">{note}</span>}
+      {input}
+      {menu}
     </div>
   );
 }
