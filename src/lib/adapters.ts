@@ -90,6 +90,11 @@ export function pickRes(want: string | undefined, allowed?: string[]): string | 
   return exact || ok.reduce((a, b) => (Math.abs(resHeight(b) - resHeight(want)) < Math.abs(resHeight(a) - resHeight(want)) ? b : a));
 }
 
+/** A form's fields; forms with variants (Kling: single shot / multi-shot) use the first, single-shot one. */
+function formProps<T>(schema?: { properties?: Record<string, T>; anyOf?: { properties?: Record<string, T> }[] }): Record<string, T> {
+  return schema?.properties || schema?.anyOf?.find((v) => v.properties)?.properties || {};
+}
+
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
 const nums = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isFinite(n) && n > 0) : []);
 const uniq = (a: number[]) => [...new Set(a)].sort((x, y) => x - y);
@@ -166,8 +171,9 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
       await Promise.all(
         vids.slice(i, i + 4).map(async (e) => {
           try {
-            const f = parse<{ jsonSchema?: { properties?: Record<string, { enum?: unknown[]; minimum?: number; maximum?: number }> } }>(await call(pf, "openart_model_form_get", { model: e.native, mode: e.mode }));
-            const props = f?.jsonSchema?.properties || {};
+            type P = Record<string, { enum?: unknown[]; minimum?: number; maximum?: number }>;
+            const f = parse<{ jsonSchema?: { properties?: P; anyOf?: { properties?: P }[] } }>(await call(pf, "openart_model_form_get", { model: e.native, mode: e.mode }));
+            const props = formProps(f?.jsonSchema);
             const rk = Object.keys(props).find((x) => /^resolution$/i.test(x)) || Object.keys(props).find((x) => /resolution/i.test(x));
             if (rk && props[rk].enum) {
               const raw = props[rk].enum!.map(String);
@@ -438,8 +444,8 @@ async function openart(pf: Platform, model: string, mode: string, req: RenderReq
   }
   const key = `${model}|${mode}`;
   if (!forms[key]) {
-    const f = parse<{ jsonSchema?: { properties?: (typeof forms)[string] } }>(await call(pf, "openart_model_form_get", { model, mode }));
-    forms[key] = f?.jsonSchema?.properties || {};
+    const f = parse<{ jsonSchema?: { properties?: (typeof forms)[string]; anyOf?: { properties?: (typeof forms)[string] }[] } }>(await call(pf, "openart_model_form_get", { model, mode }));
+    forms[key] = formProps(f?.jsonSchema);
   }
   const props = forms[key];
   const params: Record<string, unknown> = { prompt: req.prompt };
