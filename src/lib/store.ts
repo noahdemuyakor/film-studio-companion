@@ -80,14 +80,6 @@ const initialEdges: Edge[] = [
   { id: "e4", source: "n_pier", target: "n_compare", animated: true },
 ];
 
-const initialClips: Clip[] = [
-  { id: "c1", track: "video", start: 0, duration: 5, label: "Pier — Maya walks", seed: 11, transition: "cut", subtitle: "He said the last ferry." },
-  { id: "c2", track: "video", start: 5, duration: 4, label: "Jonah lowers camera", seed: 23, transition: "dissolve", subtitle: "You weren't supposed to find me here." },
-  { id: "c3", track: "dialogue", start: 0.6, duration: 3, label: "MAYA: He said the last ferry…", seed: 3, transition: "cut" },
-  { id: "c4", track: "dialogue", start: 5.8, duration: 2.6, label: "JONAH: You weren't supposed…", seed: 4, transition: "cut" },
-  { id: "c5", track: "sfx", start: 0, duration: 9, label: "Gulls + wind", seed: 5, transition: "fade" },
-  { id: "c6", track: "music", start: 2, duration: 7, label: "Low strings", seed: 6, transition: "fade" },
-];
 
 export interface StudioState {
   // Power Engine
@@ -161,7 +153,7 @@ const initial = () => ({
   activeEpisode: "",
   nodes: initialNodes,
   edges: initialEdges,
-  clips: initialClips,
+  clips: [] as Clip[],
   burnSubtitles: true,
   timelineOpen: true,
   platforms: PRESET_PLATFORMS,

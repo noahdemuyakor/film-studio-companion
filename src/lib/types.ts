@@ -188,6 +188,8 @@ export interface Episode {
   scenes: Scene[];
   engine?: "live" | "local";
   updatedAt: number;
+  /** this project's own timeline (saved when you switch projects) */
+  clips?: Clip[];
 }
 
 export type TrackId = "video" | "dialogue" | "sfx" | "music";

@@ -127,14 +127,21 @@ export default function DramaStudio() {
   const patchEp = (p: Partial<Episode>) => st.update("episodes", (v) => v.map((e) => (e.id === ep?.id ? { ...e, ...p, updatedAt: Date.now() } : e)));
   const [confirmDel, setConfirmDel] = useState("");
   /** A blank project (or one started from an uploaded script). Nothing carries over from other projects. */
+  /** Switch projects: the current timeline is saved into its project and the next project's own timeline is loaded. */
+  const openProject = (id: string, extra: Episode[] = []) => {
+    const cur = useStudio.getState();
+    const episodes = [...cur.episodes.map((e) => (e.id === cur.activeEpisode ? { ...e, clips: cur.clips } : e)), ...extra];
+    st.set({ episodes, activeEpisode: id, clips: episodes.find((e) => e.id === id)?.clips || [] });
+  };
   const newProject = (script = "", title = "") => {
-    const e: Episode = { id: uid("ep"), title: title || `Untitled project ${st.episodes.length + 1}`, logline: "", script, scenes: [], updatedAt: Date.now() };
-    st.set({ episodes: [...useStudio.getState().episodes, e], activeEpisode: e.id });
+    const e: Episode = { id: uid("ep"), title: title || `Untitled project ${st.episodes.length + 1}`, logline: "", script, scenes: [], updatedAt: Date.now(), clips: [] };
+    openProject(e.id, [e]);
     return e;
   };
   const deleteProject = (id: string) => {
     const rest = st.episodes.filter((e) => e.id !== id);
-    st.set({ episodes: rest, activeEpisode: st.activeEpisode === id ? rest[0]?.id || "" : st.activeEpisode });
+    const next = st.activeEpisode === id ? rest[0] : undefined;
+    st.set({ episodes: rest, ...(st.activeEpisode === id ? { activeEpisode: next?.id || "", clips: next?.clips || [] } : {}) });
     setConfirmDel("");
   };
   const model = modelById(st.models, st.modelId);
@@ -293,7 +300,7 @@ export default function DramaStudio() {
             <ul className="mt-2 flex flex-col gap-1">
               {st.episodes.map((e) => (
                 <li key={e.id} className="group flex items-center gap-1">
-                  <button onClick={() => st.set({ activeEpisode: e.id })} className={`flex-1 min-w-0 text-left rounded-8 px-2 py-1.5 text-12 ${e.id === ep.id ? "bg-w10 font-semibold" : "text-w60 hover:bg-w5"}`}>
+                  <button onClick={() => e.id !== ep.id && openProject(e.id)} className={`flex-1 min-w-0 text-left rounded-8 px-2 py-1.5 text-12 ${e.id === ep.id ? "bg-w10 font-semibold" : "text-w60 hover:bg-w5"}`}>
                     <span className="block truncate">{e.title}</span>
                     <span className="block text-[10px] text-w40">{e.scenes.length ? `${e.scenes.length} scenes` : e.script.trim() ? "not broken down yet" : "empty"}</span>
                   </button>
