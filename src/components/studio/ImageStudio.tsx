@@ -9,7 +9,7 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Book, ChevronR, Close, Diamond, Expand, Grid, Minus, Plus, Spark } from "../Icons";
 import { Select } from "../ui";
-import { PayWith, ShotCard } from "./shared";
+import { PayWith, RefPicker, ShotCard, type PickedRef } from "./shared";
 import { useHydrated } from "../Hydrate";
 
 export default function ImageStudio() {
@@ -22,6 +22,7 @@ export default function ImageStudio() {
   const [batch, setBatch] = useState(1);
   const [banner, setBanner] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [refs, setRefs] = useState<PickedRef[]>([]);
   const imageModels = st.models.filter((m) => m.kind === "image" && m.enabled);
   const model = modelById(st.models, st.imageModelId);
 
@@ -57,7 +58,7 @@ export default function ImageStudio() {
     const cast = st.cast.filter((c) => st.castIds.includes(c.id) && (wantsPerson || new RegExp(`\\b${c.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)));
     await Promise.all(
       temps.map(async (t) => {
-        const shot = await produceShot({ title: t.title, prompt: `${text}${quality === "High" ? ", highly detailed" : ""}`, model, settings, cast, refs: st.vault.filter((r) => st.refIds.includes(r.id)) });
+        const shot = await produceShot({ title: t.title, prompt: `${text}${quality === "High" ? ", highly detailed" : ""}`, model, settings, cast, refs: st.vault.filter((r) => st.refIds.includes(r.id)), media: refs.map((r) => ({ role: "ref" as const, url: r.url })) });
         useStudio.getState().update("images", (v) => v.map((x) => (x.id === t.id ? { ...shot, title: t.title } : x)));
       }),
     );
@@ -125,10 +126,8 @@ export default function ImageStudio() {
           }} placeholder="Describe the scene you imagine" className="w-full h-10 bg-transparent resize-none outline-none text-14 px-1.5 pt-1 placeholder:text-w50" />
           {hint && <p className="text-12 text-[#ff5c9a] px-1.5">{hint}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <button aria-label="Add reference" className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
-              <Plus size={14} />
-            </button>
-            <button aria-label="Mention element" className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
+            <RefPicker refs={refs} onChange={setRefs} />
+            <button type="button" aria-label="Mention element" className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
               <At size={14} />
             </button>
             <div className="h-8 px-2.5 rounded-8 bg-w5 flex items-center gap-1.5 text-14 font-semibold">
@@ -136,21 +135,21 @@ export default function ImageStudio() {
               <Select label="Image model" value={st.imageModelId} onChange={(v) => st.set({ imageModelId: v })} options={imageModels.map((m) => ({ id: m.id, label: m.name }))} className="w-auto" />
               <ChevronR size={12} />
             </div>
-            <button onClick={() => setAspect(["Auto", ...ASPECTS.map((a) => a.id)][(["Auto", ...ASPECTS.map((a) => a.id)].indexOf(aspect) + 1) % 5])} className="h-8 px-2.5 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-1.5">
+            <button type="button" onClick={() => setAspect(["Auto", ...ASPECTS.map((a) => a.id)][(["Auto", ...ASPECTS.map((a) => a.id)].indexOf(aspect) + 1) % 5])} className="h-8 px-2.5 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-1.5">
               <Expand size={14} /> {aspect}
             </button>
-            <button onClick={() => setQuality(quality === "High" ? "Draft" : "High")} className="h-8 px-2.5 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-1.5">
+            <button type="button" onClick={() => setQuality(quality === "High" ? "Draft" : "High")} className="h-8 px-2.5 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-1.5">
               <Diamond size={14} /> {quality}
             </button>
-            <button onClick={() => setRes(res === "2K" ? "4K" : res === "4K" ? "1K" : "2K")} className="h-8 px-2.5 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-1.5">
+            <button type="button" onClick={() => setRes(res === "2K" ? "4K" : res === "4K" ? "1K" : "2K")} className="h-8 px-2.5 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-1.5">
               <Diamond size={14} /> {res}
             </button>
             <div className="h-8 px-2 rounded-8 bg-w5 text-14 font-semibold flex items-center gap-2">
-              <button aria-label="Fewer" onClick={() => setBatch(Math.max(1, batch - 1))} className="text-w50">
+              <button type="button" aria-label="Fewer" onClick={() => setBatch(Math.max(1, batch - 1))} className="text-w50">
                 <Minus size={12} />
               </button>
               {batch}/4
-              <button aria-label="More" onClick={() => setBatch(Math.min(4, batch + 1))}>
+              <button type="button" aria-label="More" onClick={() => setBatch(Math.min(4, batch + 1))}>
                 <Plus size={12} />
               </button>
             </div>

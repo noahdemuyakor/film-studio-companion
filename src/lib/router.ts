@@ -125,7 +125,17 @@ export async function produceShot(input: ProduceInput, onStage?: (s: Shot["statu
     const plan = input.plan || (await planRoute(model, input.routeMode || st.routeMode, input.lockId ?? st.lockPlatform, duration));
     if (plan.blocked) return { ...base, credits: 0, route: plan.reason, status: "error", error: plan.blocked };
     const pf = plan.platformId ? useStudio.getState().platforms.find((x) => x.id === plan.platformId) : undefined;
-    const controls = { prompt: compiled.value, aspect_ratio: settings.aspect, duration, seed, resolution: settings.resolution, media: input.media || [] };
+    // references from everywhere: wired/picked images, the first frame, Vault references and cast face anchors
+    const st0 = useStudio.getState();
+    const faces = input.cast.map((c) => st0.vault.find((r) => r.id === c.faceRefId)?.dataUrl).filter(Boolean) as string[];
+    const all: MediaInput[] = [
+      ...(input.media || []),
+      ...(input.firstFrameUrl ? [{ role: "first" as const, url: input.firstFrameUrl }] : []),
+      ...input.refs.filter((r) => r.dataUrl && /^(data:image|https:)/.test(r.dataUrl)).map((r) => ({ role: "ref" as const, url: r.dataUrl })),
+      ...faces.map((url) => ({ role: "ref" as const, url })),
+    ];
+    const media = all.filter((m, i) => all.findIndex((x) => x.url === m.url && x.native?.id === m.native?.id) === i);
+    const controls = { prompt: compiled.value, aspect_ratio: settings.aspect, duration, seed, resolution: settings.resolution, media };
     const r = pf ? await executeOnPlatform(pf, model, controls, payload, plan.cost, input.onLine) : await dispatch(model, payload);
     return { ...base, credits: plan.cost, platformId: plan.platformId, route: plan.reason, status: "done", resultUrl: r.url, simulated: r.simulated, nativeId: "nativeId" in r ? r.nativeId : undefined };
   } catch (e) {

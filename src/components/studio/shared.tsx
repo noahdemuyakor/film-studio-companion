@@ -206,7 +206,7 @@ export function Vault({ selected, onToggle }: { selected: string[]; onToggle: (i
   const file = useRef<HTMLInputElement>(null);
   const add = async (f?: File) => {
     if (vault.length >= VAULT_LIMIT) return alert(`The Reference Vault holds up to ${VAULT_LIMIT} items.`);
-    const dataUrl = f ? await fileToDataUrl(f) : undefined;
+    const dataUrl = f ? await fileToDataUrl(f, 1024) : undefined;
     const name = f ? f.name.replace(/\.[^.]+$/, "") : `New ${kind}`;
     const description = prompt(`Describe this ${kind} (Claude uses this to keep it consistent):`, name) || name;
     update("vault", (v) => [...v, { id: uid("ref"), kind: f?.type.startsWith("audio") ? "audio" : kind, name, description, dataUrl, tags: [], createdAt: Date.now() }]);
@@ -251,6 +251,91 @@ export function Vault({ selected, onToggle }: { selected: string[]; onToggle: (i
       <button onClick={() => add()} className="text-12 text-w50 text-left hover:text-white">
         + Add a text-only {kind}
       </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Reference picker: images that guide a generation                    */
+/* ------------------------------------------------------------------ */
+
+export interface PickedRef {
+  id: string;
+  url: string; // data: URL (uploaded) or https: URL (a render)
+  name: string;
+}
+
+/** Up to `max` reference images: upload from the computer, or pick a render or a Vault item. */
+export function RefPicker({ refs, onChange, max = 10, label = "References", drop = "up" }: { refs: PickedRef[]; onChange: (r: PickedRef[]) => void; max?: number; label?: string; drop?: "up" | "down" }) {
+  const st = useStudio();
+  const [open, setOpen] = useState(false);
+  const file = useRef<HTMLInputElement>(null);
+  const addAll = (more: PickedRef[]) => onChange([...refs, ...more.filter((m) => !refs.some((r) => r.url === m.url))].slice(0, max));
+  const upload = async (files: FileList | null) => {
+    const list = [...(files || [])].filter((f) => f.type.startsWith("image/")).slice(0, max - refs.length);
+    addAll(await Promise.all(list.map(async (f) => ({ id: uid("ref"), url: await fileToDataUrl(f, 1536), name: f.name }))));
+    setOpen(false);
+  };
+  const renders = [...st.images, ...st.shots].filter((s) => s.status === "done" && s.resultUrl && !/\.(mp4|webm|mov)(\?|$)/i.test(s.resultUrl)).slice(0, 24);
+  const vault = st.vault.filter((v) => v.dataUrl && v.kind !== "audio");
+  return (
+    <div className="relative flex items-center gap-1.5">
+      <button type="button" aria-label={`Add ${label.toLowerCase()}`} title={`${label} (${refs.length} of ${max})`} disabled={refs.length >= max} onClick={() => setOpen(!open)} className="h-8 min-w-8 px-2 rounded-8 bg-w5 flex items-center gap-1 text-12 font-semibold disabled:opacity-40">
+        <Plus size={14} />
+        {refs.length > 0 && <span>{refs.length}</span>}
+      </button>
+      {refs.map((r) => (
+        <span key={r.id} className="relative group/ref">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={r.url} alt={r.name} title={r.name} className="w-8 h-8 rounded-6 object-cover border border-w10" />
+          <button type="button" aria-label={`Remove ${r.name}`} onClick={() => onChange(refs.filter((x) => x.id !== r.id))} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#1b2024] border border-w20 grid place-items-center text-[9px] opacity-0 group-hover/ref:opacity-100">
+            ✕
+          </button>
+        </span>
+      ))}
+      <input ref={file} type="file" accept="image/*" multiple hidden onChange={(e) => (upload(e.target.files), (e.target.value = ""))} />
+      {open && (
+        <div className={`absolute ${drop === "up" ? "bottom-full mb-2" : "top-full mt-2"} left-0 z-30 w-[300px] rounded-12 bg-[#1b2024] border border-w10 shadow-2xl p-2 flex flex-col gap-2 text-12`}>
+          <div className="flex items-center justify-between">
+            <span className="font-semibold">
+              {label} · {refs.length} of {max}
+            </span>
+            <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="text-w50">
+              ✕
+            </button>
+          </div>
+          <button type="button" onClick={() => file.current?.click()} className="h-9 rounded-8 bg-lime text-dark font-semibold">
+            Upload images from your computer
+          </button>
+          {renders.length > 0 && (
+            <div>
+              <p className="text-w50 mb-1">From your renders</p>
+              <div className="grid grid-cols-6 gap-1">
+                {renders.map((s) => (
+                  <button type="button" key={s.id} onClick={() => addAll([{ id: uid("ref"), url: s.resultUrl!, name: s.title }])} className="aspect-square rounded-6 overflow-hidden border border-w10 hover:border-lime">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={s.resultUrl} alt={s.title} className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {vault.length > 0 && (
+            <div>
+              <p className="text-w50 mb-1">From the Vault</p>
+              <div className="grid grid-cols-6 gap-1">
+                {vault.map((v) => (
+                  <button type="button" key={v.id} onClick={() => addAll([{ id: uid("ref"), url: v.dataUrl!, name: v.name }])} className="aspect-square rounded-6 overflow-hidden border border-w10 hover:border-lime" title={v.name}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={v.dataUrl} alt={v.name} className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-[10px] text-w40 leading-4">Only use photos of yourself, or of people who agreed. Flick can only use images made on Flick; Pixmax uses the first reference.</p>
+        </div>
+      )}
     </div>
   );
 }

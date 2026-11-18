@@ -19,7 +19,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,7 +50,7 @@ function readBody(req) {
     let s = "";
     req.on("data", (d) => {
       s += d;
-      if (s.length > 5e6) fail(new Error("body too large"));
+      if (s.length > 40e6) fail(new Error("body too large"));
     });
     req.on("end", () => {
       try {
@@ -166,6 +166,46 @@ function importMedia(res, body) {
   send(res, 200, { file: `imports/${name}` });
 }
 
+/* ---------------------- reference images for platforms ---------------------- */
+// References reach platforms in different ways: some take a local file path (Google Flow, Pixmax uploads),
+// some take bytes (ImagineArt upload, OpenArt signed PUT). The page may only hold a data: URL or a web URL
+// (which the browser can't always fetch across origins), so the bridge turns either into bytes or a file.
+const REFS = join(OUT, "refs");
+mkdirSync(REFS, { recursive: true });
+const MAX_REF = 25 * 1024 * 1024;
+async function refBytes(src) {
+  const s = String(src || "");
+  const m = s.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (m) {
+    const buf = m[2] ? Buffer.from(m[3], "base64") : Buffer.from(decodeURIComponent(m[3]));
+    return { buf, type: m[1] || "application/octet-stream" };
+  }
+  if (!/^https:\/\//i.test(s)) throw new Error("Only data: or https: images can be used as references");
+  const r = await fetch(s, { redirect: "follow" });
+  if (!r.ok) throw new Error(`Couldn't download the reference (${r.status})`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  return { buf, type: (r.headers.get("content-type") || "application/octet-stream").split(";")[0] };
+}
+const extOf = (type, src) => ({ "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif", "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov" })[type] || (String(src).match(/\.(png|jpe?g|webp|gif|mp4|webm|mov)(\?|$)/i)?.[0].replace("?", "") ?? ".bin");
+async function refRoute(res, url, body) {
+  const { buf, type } = await refBytes(body.src);
+  if (buf.length > MAX_REF) return send(res, 413, { error: "Reference is larger than 25 MB" });
+  if (!/^(image|video)\//.test(type)) return send(res, 400, { error: `Not an image or video (${type})` });
+  if (url === "/media/save") {
+    const p = join(REFS, `${randomBytes(9).toString("base64url")}${extOf(type, body.src)}`);
+    writeFileSync(p, buf);
+    return send(res, 200, { path: p, type, size: buf.length });
+  }
+  if (url === "/media/bytes") return send(res, 200, { base64: buf.toString("base64"), type, size: buf.length });
+  if (url === "/media/put") {
+    // presigned upload (OpenArt): only https URLs, bytes exactly as given
+    if (!/^https:\/\//i.test(String(body.signUrl || ""))) return send(res, 400, { error: "signUrl must be https" });
+    const r = await fetch(body.signUrl, { method: "PUT", headers: { "content-type": body.contentType || type }, body: buf });
+    return send(res, r.ok ? 200 : 502, r.ok ? { ok: true, size: buf.length, type } : { error: `Upload refused (${r.status}): ${(await r.text()).slice(0, 200)}` });
+  }
+  send(res, 404, { error: "unknown route" });
+}
+
 /* ------------------------------- Pixmax ------------------------------- */
 // The Pixmax CLI (pixmax.cmd -> python launcher.py) can't be spawned without a shell, so the bridge runs its
 // launcher directly. Only these fixed, read-only or generate commands are reachable: no free-form arguments.
@@ -206,10 +246,17 @@ function runPixmax(res, body) {
   else if (a === "projects") args = ["--json", "project", "list"];
   else if (a === "files" && pmSafe(body.project)) args = ["--json", "project", "files", "--project", body.project];
   else if (a === "models" && /^GENERATE_(IMAGE|VIDEO)$/.test(body.type)) args = ["--json", "model", "search", "--type", body.type];
+  else if (a === "upload" && pmSafe(body.file) && typeof body.path === "string" && resolve(body.path).startsWith(REFS + sep) && existsSync(body.path))
+    args = ["--json", "assets", "upload", resolve(body.path), "--file-uuid", body.file, "--as-node", `FSC ref ${randomBytes(3).toString("hex")}`, "--x", "0", "--y", String(400 + Math.floor(Math.random() * 400))];
   else if (a === "explain" && /^GENERATE_(IMAGE|VIDEO)$/.test(body.type) && pmSafe(body.model)) args = ["--json", "model", "explain", body.model, "--type", body.type];
   else if ((a === "image" || a === "video") && body.prompt && pmSafe(body.file) && (!body.model || pmSafe(body.model))) {
     const label = `FSC ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
-    args = a === "image" ? ["--json", "image", "generate", label] : ["--json", "video", "text-to-video", label];
+    // with a reference node (an uploaded image on the canvas): edit from it / animate it
+    const ref = /^[0-9a-f-]{36}$/i.test(String(body.refNode || "")) ? body.refNode : "";
+    args =
+      a === "image"
+        ? ref ? ["--json", "image", "edit", label, "--image-node", ref] : ["--json", "image", "generate", label]
+        : ref ? ["--json", "video", "image-to-video", label, "--image-node", ref] : ["--json", "video", "text-to-video", label];
     args.push("--file", body.file, "--prompt", pmText(body.prompt));
     if (body.model) args.push("--model", body.model);
     if (pmSafe(body.aspect)) args.push("--aspect-ratio", body.aspect);
@@ -303,6 +350,7 @@ http
       if (req.method === "POST" && req.url === "/claude") return runClaude(res, await readBody(req));
       if (req.method === "POST" && req.url === "/media/import") return importMedia(res, await readBody(req));
       if (req.method === "POST" && req.url === "/pixmax") return runPixmax(res, await readBody(req));
+      if (req.method === "POST" && ["/media/save", "/media/bytes", "/media/put"].includes(req.url)) return refRoute(res, req.url, await readBody(req));
       const m = req.url.match(/^\/mcp\/([^/]+)\/rpc$/);
       if (req.method === "POST" && m) {
         const body = await readBody(req);

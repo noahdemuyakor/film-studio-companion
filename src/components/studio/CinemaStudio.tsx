@@ -11,7 +11,7 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Bars, Book, ChevronR, Close, Folder, Image as ImageIcon, Lock, Mic, Plus, Speaker, Spark, Wave } from "../Icons";
 import { Chip, Select, Slider } from "../ui";
-import { durationOptions, nearestRes, resolutionOptions, RouteSelector, ShotCard, Vault } from "./shared";
+import { durationOptions, nearestRes, RefPicker, resolutionOptions, RouteSelector, ShotCard, Vault, type PickedRef } from "./shared";
 import { nearest } from "@/lib/adapters";
 import Preflight from "./Preflight";
 import { useHydrated } from "../Hydrate";
@@ -73,6 +73,8 @@ export default function CinemaStudio() {
   const [tab, setTab] = useState<Tab>("create");
   const [panel, setPanel] = useState<"history" | "how">("how");
   const [refMode, setRefMode] = useState<"refs" | "extend">("refs");
+  const [firstPick, setFirstPick] = useState<PickedRef[]>([]);
+  const [refPicks, setRefPicks] = useState<PickedRef[]>([]);
   const [sheet, setSheet] = useState(false);
   const [preview, setPreview] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -123,6 +125,7 @@ export default function CinemaStudio() {
         prev: prevShot,
         firstFrameUrl: prevShot?.resultUrl || firstRef?.dataUrl,
         lastFrameUrl: endRef?.dataUrl,
+        media: [...firstPick.map((r) => ({ role: "first" as const, url: r.url })), ...refPicks.map((r) => ({ role: "ref" as const, url: r.url }))],
         extendBack: extend.back,
         extendForward: extend.fwd,
         plan,
@@ -219,6 +222,16 @@ export default function CinemaStudio() {
                 <p className="text-12 text-w50">Scene length: {total}s of 30s max</p>
               </div>
             )}
+            <div className="shrink-0 rounded-12 bg-w5 p-3 flex flex-col gap-2 text-12">
+              <div className="flex items-center gap-2">
+                <span className="w-20 shrink-0 font-semibold text-w60">First frame</span>
+                <RefPicker refs={firstPick} onChange={setFirstPick} max={1} label="First frame" drop="down" />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-20 shrink-0 font-semibold text-w60">References</span>
+                <RefPicker refs={refPicks} onChange={setRefPicks} max={10} drop="down" />
+              </div>
+            </div>
             <div className="shrink-0 rounded-12 bg-w5 p-3">
               <p className="text-14 font-semibold">Prompt</p>
               <textarea

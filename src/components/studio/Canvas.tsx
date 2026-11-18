@@ -64,7 +64,7 @@ import {
   Wand,
 } from "../Icons";
 import { Select } from "../ui";
-import { durationOptions, nearestRes, PayWith, Preview, resolutionOptions, RouteSelector } from "./shared";
+import { durationOptions, nearestRes, PayWith, Preview, RefPicker, resolutionOptions, RouteSelector, type PickedRef } from "./shared";
 import Timeline from "./Timeline";
 import { useHydrated } from "../Hydrate";
 
@@ -229,7 +229,9 @@ function MediaNode({ id, data, selected }: NodeProps) {
   const play = st.canvasPrefs.playOnHover;
   const cost = model ? estimateCost(model, duration || 5) : 0;
   const w = kind === "voice" ? 260 : aspect === "9:16" || aspect === "3:4" ? 200 : aspect === "1:1" ? 240 : 300;
-  const nonFlick = st.routeMode === "lock" && st.platforms.find((p) => p.id === st.lockPlatform)?.adapter && !["flick", "imagineart"].includes(String(st.platforms.find((p) => p.id === st.lockPlatform)?.adapter));
+  // Flick has no upload tool: it can only use references that were themselves made on Flick
+  const payPf = st.routeMode === "lock" ? st.platforms.find((p) => p.id === st.lockPlatform) : undefined;
+  const nonFlick = payPf?.adapter === "flick" && inputs.media.some((m) => m.native?.platformId !== payPf.id);
 
   const run = async () => {
     const fullPrompt = [inputs.text, prompt].filter(Boolean).join("\n");
@@ -259,6 +261,15 @@ function MediaNode({ id, data, selected }: NodeProps) {
       return nid;
     });
     await Promise.all([runOne(id), ...extra.map(runOne)]);
+  };
+
+  /** a picked/uploaded reference becomes an image node to the left, wired into this one */
+  const addRefNode = (r: PickedRef) => {
+    const self = rf.getNode(id)!;
+    const nid = uid("n");
+    const n = inputs.thumbs.length;
+    useStudio.getState().update("nodes", (ns) => [...ns, { id: nid, type: "media", position: { x: self.position.x - 260, y: self.position.y + n * 140 }, data: { kind: "image", title: r.name.replace(/\.[^.]+$/, ""), upload: { url: r.url, name: r.name, type: "image/*" }, aspect: "1:1" } }]);
+    useStudio.getState().update("edges", (es) => [...es, { id: uid("e"), source: nid, target: id }]);
   };
 
   const derive = (d: D) => {
@@ -427,10 +438,11 @@ function MediaNode({ id, data, selected }: NodeProps) {
               )}
             </div>
           )}
-          {inputs.thumbs.length > 0 && (
-            <div className="flex items-center gap-1.5">
+          {kind !== "voice" && (
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-w50">{kind === "video" && mode !== "reference" ? "First frame & refs" : "References"}</span>
-              {inputs.thumbs.slice(0, 6).map((t) =>
+              <RefPicker refs={[]} onChange={(rs) => rs.forEach((r) => addRefNode(r))} max={Math.max(0, 10 - inputs.thumbs.length)} />
+              {inputs.thumbs.slice(0, 8).map((t) =>
                 isVideoUrl(t.url) ? (
                   <video key={t.id} src={t.url} muted className="w-9 h-9 rounded-6 object-cover" />
                 ) : (
@@ -438,7 +450,7 @@ function MediaNode({ id, data, selected }: NodeProps) {
                   <img key={t.id} src={t.url} alt="" className="w-9 h-9 rounded-6 object-cover" />
                 ),
               )}
-              {nonFlick && <span className="text-[10px] text-w40">this platform uses the prompt only</span>}
+              {nonFlick && <span className="text-[10px] text-w40">Flick only uses references made on Flick</span>}
             </div>
           )}
           {inputs.text && <p className="rounded-8 bg-w5 px-2 py-1.5 text-w60 max-h-[60px] overflow-auto nowheel">From note: {inputs.text}</p>}
@@ -869,7 +881,7 @@ function Board() {
   const onUpload = async (f?: File) => {
     if (!f) return;
     if (f.size > 4 * 1024 * 1024 && f.type.startsWith("image")) return alert("Images up to 4 MB can be kept on the canvas.");
-    const url = f.type.startsWith("video") ? URL.createObjectURL(f) : await fileToDataUrl(f);
+    const url = f.type.startsWith("video") ? URL.createObjectURL(f) : await fileToDataUrl(f, 1536);
     add("media", { kind: f.type.startsWith("video") ? "video" : "image", title: f.name.replace(/\.[^.]+$/, ""), upload: { url, name: f.name, type: f.type }, aspect: "16:9" });
   };
 

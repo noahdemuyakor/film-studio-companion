@@ -295,6 +295,18 @@ export interface RenderRequest {
   media?: MediaInput[]; // first frame and reference images wired into the render
 }
 
+/* references: the bridge turns data: URLs and web URLs into bytes or local files for each platform */
+async function bridgePost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const st = useStudio.getState();
+  const r = await fetch(`${st.bridgeUrl}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(await bridgeHeaders()) }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Bridge ${r.status}`);
+  return j as T;
+}
+const refFile = (src: string) => bridgePost<{ path: string; type: string }>("/media/save", { src });
+const refBytes = (src: string) => bridgePost<{ base64: string; type: string; size: number }>("/media/bytes", { src });
+const usable = (m: MediaInput) => !!m.url && /^(data:|https:)/.test(m.url);
+
 export interface RenderResult {
   url: string;
   nativeId?: string; // the platform's own id for the result (Flick job id)
@@ -346,6 +358,8 @@ async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Li
   // images made on Flick can be passed by their job id; images from elsewhere can't be uploaded through Flick's tools
   const onFlick = (m: MediaInput) => (m.native?.platformId === pf.id ? m.native.id : undefined);
   const refs = (req.media || []).filter((m) => m.role === "ref").map(onFlick).filter(Boolean) as string[];
+  const skipped = (req.media || []).filter((m) => !onFlick(m)).length;
+  if (skipped) onLine(`Flick can only use images made on Flick as references: ${skipped} other image${skipped === 1 ? "" : "s"} left out.`);
   const first = (req.media || []).filter((m) => m.role === "first").map(onFlick).find(Boolean);
   let job: string;
   if (req.kind === "image") {
@@ -372,7 +386,35 @@ async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Li
 
 /* --- OpenArt: form-driven params, poll by historyId --- */
 const forms: Record<string, Record<string, { enum?: unknown[]; type?: string; minimum?: number; maximum?: number }>> = {};
+let oaModes: Record<string, string[]> | null = null;
+/** OpenArt: upload one reference (signed PUT through the bridge) and return the visualReference its forms expect */
+async function openartUpload(pf: Platform, src: string, purpose: string): Promise<unknown> {
+  const b = await refBytes(src);
+  const sign = parse<{ signURL?: string; signUrl?: string; accessURL?: string; uploadId?: string }>(
+    await call(pf, "openart_upload_sign", { mediaType: b.type.startsWith("video") ? "video" : "image", size: b.size, contentType: b.type, purpose }),
+  );
+  const signUrl = sign?.signURL || sign?.signUrl;
+  if (!signUrl || !sign?.accessURL) throw new Error("OpenArt didn't give an upload link");
+  await bridgePost("/media/put", { signUrl, src, contentType: b.type });
+  const meta = parse<{ visualReference?: unknown }>(await call(pf, "openart_upload_metadata_get", { accessURL: sign.accessURL, uploadId: sign.uploadId }));
+  if (!meta?.visualReference) throw new Error("OpenArt didn't accept the reference");
+  return meta.visualReference;
+}
+
 async function openart(pf: Platform, model: string, mode: string, req: RenderRequest, onLine: Line): Promise<string> {
+  const refs = (req.media || []).filter(usable);
+  if (refs.length) {
+    // pick the mode that takes images, if this model has one
+    if (!oaModes) {
+      const j = parse<{ models?: { id: string; modes?: { image?: { mode: string }[]; video?: { mode: string }[] } }[] }>(await call(pf, "openart_model_list", {}));
+      oaModes = Object.fromEntries((j?.models || []).map((m) => [m.id, [...(m.modes?.image || []), ...(m.modes?.video || [])].map((x) => x.mode)]));
+    }
+    const modes = oaModes[model] || [];
+    const want = req.kind === "image" ? ["image2image"] : refs.some((m) => m.role === "first") ? ["image2video", "element2video"] : ["element2video", "image2video"];
+    const hit = want.find((w) => modes.includes(w));
+    if (hit) mode = hit;
+    else onLine(`OpenArt's ${model} has no image-input mode: rendering from the prompt only.`);
+  }
   const key = `${model}|${mode}`;
   if (!forms[key]) {
     const f = parse<{ jsonSchema?: { properties?: (typeof forms)[string] } }>(await call(pf, "openart_model_form_get", { model, mode }));
@@ -394,6 +436,17 @@ async function openart(pf: Platform, model: string, mode: string, req: RenderReq
   if (res && req.resolution) {
     const hit = props[res].enum?.find((x) => normRes(String(x)) === normRes(req.resolution!));
     if (hit !== undefined || !props[res].enum) params[res] = hit ?? req.resolution;
+  }
+  // reference fields: whatever this mode's form calls them (image / images / referenceImages / startFrame…)
+  if (refs.length && !/^text2/.test(mode)) {
+    onLine(`OpenArt: uploading ${refs.length} reference${refs.length === 1 ? "" : "s"}…`);
+    const ups: unknown[] = [];
+    for (const m of refs.slice(0, 6)) ups.push(await openartUpload(pf, m.url!, req.kind === "video" ? "create-video" : "create-image"));
+    const fields = Object.keys(props).filter((k) => /image|frame|reference|element|subject/i.test(k) && !/count|num|ratio|strength|weight/i.test(k));
+    const listField = fields.find((k) => props[k].type === "array");
+    const oneField = fields.find((k) => props[k].type !== "array");
+    if (listField) params[listField] = ups;
+    else if (oneField) params[oneField] = ups[0];
   }
   const q = parse<{ items?: { totalCredits: number }[]; totalCredits?: number }>(await call(pf, "openart_model_cost", { model, mode, params }));
   const price = q?.items?.[0]?.totalCredits ?? q?.totalCredits;
@@ -419,8 +472,22 @@ async function openart(pf: Platform, model: string, mode: string, req: RenderReq
 async function imagine(pf: Platform, model: string, req: RenderRequest, onLine: Line): Promise<string> {
   const org_id = await imagineOrg(pf);
   onLine(`ImagineArt: ${model}`);
-  const web = (req.media || []).filter((m) => m.url && /^https?:/.test(m.url));
-  const image_url = (req.kind === "video" ? [...web.filter((m) => m.role === "first"), ...web.filter((m) => m.role === "ref")] : web).map((m) => m.url!).slice(0, 4);
+  // web images can be passed as URLs; local ones (and every image, for Seedance models) are uploaded to ImagineArt first
+  const ordered = [...(req.media || []).filter((m) => m.role === "first"), ...(req.media || []).filter((m) => m.role === "ref")].filter(usable).slice(0, 4);
+  const mustUpload = /seedance/i.test(model);
+  const image_url: string[] = [];
+  for (const m of ordered) {
+    if (/^https:/.test(m.url!) && !mustUpload) {
+      image_url.push(m.url!);
+      continue;
+    }
+    onLine("ImagineArt: uploading a reference…");
+    const file = m.url!.startsWith("data:") ? m.url! : await refBytes(m.url!).then((b) => `data:${b.type};base64,${b.base64}`);
+    const up = await call(pf, "user_upload", { file, org_id });
+    const u = up.match(/https?:\/\/[^\s"'<>)]+/)?.[0];
+    if (!u) throw new Error(`ImagineArt didn't accept the reference: ${up.slice(0, 160)}`);
+    image_url.push(u);
+  }
   const t =
     req.kind === "image"
       ? await call(pf, "generate_image", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, ...(req.resolution ? { resolution: req.resolution } : {}), ...(image_url.length ? { image_url } : {}) })
@@ -450,6 +517,13 @@ async function flow(pf: Platform, model: string, req: RenderRequest, onLine: Lin
       if (req.resolution) scene.resolution = req.resolution;
     }
   } else if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(req.aspect)) scene.aspect_ratio = req.aspect;
+  const refs = (req.media || []).filter(usable);
+  if (refs.length) {
+    onLine("Google Flow: preparing references…");
+    const first = req.kind === "video" ? refs.find((m) => m.role === "first") : undefined;
+    if (first) scene.first_frame = (await refFile(first.url!)).path;
+    else scene.reference_images = await Promise.all(refs.filter((m) => m !== first).slice(0, 3).map(async (m) => (await refFile(m.url!)).path));
+  }
   onLine(`Google Flow: ${model}`);
   const g = await call(pf, "flow_generate", { project: "FilmStudioCompanion", scenes: [scene] });
   const gj = parse<{ jobs?: { job_id?: string; id?: string }[]; job_ids?: string[]; task_id?: string }>(g);
@@ -557,6 +631,16 @@ async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: L
   const file = pf.adapterConfig?.projectId;
   if (!file) throw new Error("Choose a Pixmax project for renders in Settings → Pixmax.");
   const extra = await pixmaxExtras(model, req.kind);
+  let refNode: string | undefined;
+  const ref = [...(req.media || []).filter((m) => m.role === "first"), ...(req.media || []).filter((m) => m.role === "ref")].find(usable);
+  if (ref) {
+    onLine("Pixmax: uploading the reference…");
+    const { path } = await refFile(ref.url!);
+    const up = JSON.stringify(await pixmaxCall({ action: "upload", path, file }));
+    refNode = up.match(/"(?:nodeUuid|node_uuid|uuid)"\s*:\s*"([0-9a-f-]{36})"/i)?.[1];
+    if (!refNode) throw new Error(`Pixmax didn't place the reference on the canvas: ${up.slice(0, 160)}`);
+    if ((req.media || []).filter(usable).length > 1) onLine("Pixmax uses one reference image: the first was used.");
+  }
   onLine(`Pixmax: ${model} (this waits until the render is done)…`);
   const r = await pixmaxCall({
     action: req.kind,
@@ -567,6 +651,7 @@ async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: L
     resolution: req.resolution,
     duration: req.kind === "video" ? String(Math.round(req.duration || 5)) : undefined,
     extra,
+    refNode,
   });
   const text = JSON.stringify(r ?? "");
   const fail = text.match(/"(?:status|taskStatus)"\s*:\s*"(FAILED|ABORTED)"/);

@@ -55,7 +55,7 @@ function CastEditor({ c }: { c: CastMember }) {
           onChange={async (e) => {
             const f = e.target.files?.[0];
             if (!f) return;
-            const dataUrl = await fileToDataUrl(f);
+            const dataUrl = await fileToDataUrl(f, 1024);
             const id = uid("ref");
             update("vault", (v) => [...v, { id, kind: "character", name: `${c.name} face`, description: c.face, dataUrl, tags: ["face anchor"], createdAt: Date.now() }]);
             patch({ faceRefId: id });
