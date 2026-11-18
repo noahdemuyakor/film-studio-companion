@@ -9,7 +9,7 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Book, ChevronR, Close, Diamond, Expand, Grid, Minus, Plus, Spark } from "../Icons";
 import { Select } from "../ui";
-import { ShotCard } from "./shared";
+import { PayWith, ShotCard } from "./shared";
 import { useHydrated } from "../Hydrate";
 
 export default function ImageStudio() {
@@ -144,6 +144,7 @@ export default function ImageStudio() {
                 <Plus size={12} />
               </button>
             </div>
+            <PayWith modelId={st.imageModelId} />
           </div>
           </div>
           <aside className="shrink-0 w-[92px] md:w-[120px] flex flex-col gap-1.5">

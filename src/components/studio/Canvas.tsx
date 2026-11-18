@@ -209,7 +209,7 @@ function ShotNode({ id, data }: NodeProps) {
         <Select label="Model" value={model.id} onChange={(v) => patchNode(id, { modelId: v })} options={st.models.filter((m) => m.enabled && m.kind !== "audio").map((m) => ({ id: m.id, label: `${m.name} · ${m.tier}` }))} className="text-12" />
       </div>
       <div className="nodrag">
-        <RouteSelector compact mode={(data.routeMode as RouteMode) || "cheapest"} lock={String(data.lockId || "")} onChange={(m, l) => patchNode(id, { routeMode: m, lockId: l })} />
+        <RouteSelector compact modelId={model.id} mode={(data.routeMode as RouteMode) || "cheapest"} lock={String(data.lockId || "")} onChange={(m, l) => patchNode(id, { routeMode: m, lockId: l })} />
       </div>
       {shot && shot.settings && <Preview shot={shot} />}
       {shot?.route && <p className="text-[10px] text-w40">{shot.route}</p>}

@@ -263,7 +263,7 @@ export default function CinemaStudio() {
             </div>
             <div className="shrink-0 rounded-12 bg-w5 p-3">
               <p className="text-12 text-w50 font-semibold mb-2">Credit routing</p>
-              <RouteSelector mode={st.routeMode} lock={st.lockPlatform} onChange={(m, l) => st.set({ routeMode: m, lockPlatform: l })} />
+              <RouteSelector modelId={st.modelId} mode={st.routeMode} lock={st.lockPlatform} onChange={(m, l) => st.set({ routeMode: m, lockPlatform: l })} />
             </div>
           </>
         )}

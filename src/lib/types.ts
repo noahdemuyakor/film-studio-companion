@@ -260,6 +260,8 @@ export interface RoutePlan {
   reason: string;
   failover: boolean;
   alternatives: { platformId: string; cost: number; ok: boolean; why: string }[];
+  /** set when the person chose a platform that can't run this: nothing is rendered or spent */
+  blocked?: string;
 }
 
 export interface EngineLog {

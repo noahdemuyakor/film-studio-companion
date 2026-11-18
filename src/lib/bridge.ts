@@ -288,17 +288,18 @@ export function routeLocal(model: ModelDef, mode: RouteMode, lockId: string, pla
     });
   const name = (id: string) => platforms.find((x) => x.id === id)?.name || id;
   if (mode === "lock" && lockId) {
+    // "I choose": the person picked whose credits pay. Never switch to another platform behind their back.
+    const pf = platforms.find((x) => x.id === lockId);
     const locked = alternatives.find((a) => a.platformId === lockId);
-    if (locked?.ok) return { platformId: lockId, cost: locked.cost, reason: `Feature lock: ${name(lockId)}`, failover: false, alternatives };
-    const fb = alternatives.find((a) => a.ok);
-    if (fb)
-      return {
-        platformId: fb.platformId,
-        cost: fb.cost,
-        reason: locked ? `${name(lockId)} is below its reserve — failed over to ${name(fb.platformId)}` : `${name(lockId)} doesn't host ${model.name} — routed to ${name(fb.platformId)}`,
-        failover: true,
-        alternatives,
-      };
+    if (locked?.ok) return { platformId: lockId, cost: locked.cost, reason: `You chose ${name(lockId)} (${locked.cost} cr)`, failover: false, alternatives };
+    const blocked = !pf
+      ? "The platform you chose no longer exists — pick another under “Pay with”."
+      : !pf.enabled
+        ? `${pf.name} is switched off in Settings — turn it on or pick another platform.`
+        : !locked
+          ? `${pf.name} doesn't offer ${model.name} — pick another model or platform.`
+          : `${pf.name} has ${pf.balance} credits; this needs ${locked.cost} and you keep ${pf.threshold} in reserve — pick another platform or lower the reserve.`;
+    return { platformId: null, cost: locked?.cost ?? estimateCost(model, duration), reason: blocked, failover: false, alternatives, blocked };
   }
   const best = alternatives.find((a) => a.ok);
   if (best) return { platformId: best.platformId, cost: best.cost, reason: `Cheapest available credit: ${name(best.platformId)} (${best.cost} cr)`, failover: false, alternatives };
@@ -312,7 +313,8 @@ export async function planRoute(model: ModelDef, mode: RouteMode, lockId: string
   const fresh = useStudio.getState().platforms;
   const local = routeLocal(model, mode, lockId, fresh, duration);
   const t0 = performance.now();
-  if (claudeSource() === "none" || local.alternatives.length < 2) {
+  // a platform the person chose (or a blocked choice) needs no Claude call: there is nothing to decide
+  if (claudeSource() === "none" || local.alternatives.length < 2 || mode === "lock" || local.blocked) {
     st.log({ task: `Credit router → ${model.name}`, mode: "local", model: "local engine", ms: Math.round(performance.now() - t0), ok: true, note: local.reason });
     return local;
   }

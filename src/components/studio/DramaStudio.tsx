@@ -124,7 +124,19 @@ export default function DramaStudio() {
   const [pending, setPending] = useState<{ lines: (PreflightLine & { shot: { prompt: string; title: string; chars: string[] } })[] } | null>(null);
   const [batchMsg, setBatchMsg] = useState("");
   const ep = st.episodes.find((e) => e.id === st.activeEpisode) || st.episodes[0];
-  const patchEp = (p: Partial<Episode>) => st.update("episodes", (v) => v.map((e) => (e.id === ep.id ? { ...e, ...p, updatedAt: Date.now() } : e)));
+  const patchEp = (p: Partial<Episode>) => st.update("episodes", (v) => v.map((e) => (e.id === ep?.id ? { ...e, ...p, updatedAt: Date.now() } : e)));
+  const [confirmDel, setConfirmDel] = useState("");
+  /** A blank project (or one started from an uploaded script). Nothing carries over from other projects. */
+  const newProject = (script = "", title = "") => {
+    const e: Episode = { id: uid("ep"), title: title || `Untitled project ${st.episodes.length + 1}`, logline: "", script, scenes: [], updatedAt: Date.now() };
+    st.set({ episodes: [...useStudio.getState().episodes, e], activeEpisode: e.id });
+    return e;
+  };
+  const deleteProject = (id: string) => {
+    const rest = st.episodes.filter((e) => e.id !== id);
+    st.set({ episodes: rest, activeEpisode: st.activeEpisode === id ? rest[0]?.id || "" : st.activeEpisode });
+    setConfirmDel("");
+  };
   const model = modelById(st.models, st.modelId);
   const cSel = st.cast.find((c) => c.id === castSel) || st.cast[0];
 
@@ -137,8 +149,14 @@ export default function DramaStudio() {
     try {
       const text = await readScriptFile(f);
       const base = f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+      if (!ep) {
+        newProject(text, base);
+        setImportMsg(`Loaded ${f.name} (${text.split(/\s+/).length.toLocaleString()} words). Now break it down with Claude.`);
+        setImporting(false);
+        return;
+      }
       // a fresh script replaces the old breakdown, which no longer matches it
-      patchEp({ script: text, scenes: [], logline: "", ...(/^Episode \d+$/.test(ep.title) || !ep.title.trim() ? { title: base } : {}) });
+      patchEp({ script: text, scenes: [], logline: "", ...(/^(Episode|Untitled project) \d+$/.test(ep.title) || !ep.title.trim() ? { title: base } : {}) });
       setImportMsg(`Loaded ${f.name} (${text.split(/\s+/).length.toLocaleString()} words). Now break it down with Claude.`);
     } catch (e) {
       setImportMsg(e instanceof Error ? e.message : String(e));
@@ -154,6 +172,18 @@ export default function DramaStudio() {
     setBusy(true);
     const r = await breakdownScript(ep.script, st.cast);
     patchEp({ ...r.value, title: ep.title, engine: r.mode });
+    // anyone who speaks in the breakdown but isn't in the cast yet joins it, unlocked, so a new project needs no setup
+    const known = new Set(useStudio.getState().cast.map((c) => c.name.toLowerCase()));
+    const fresh = [...new Set(r.value.scenes.flatMap((sc) => sc.dialogue.map((d) => d.character.trim())).filter((n) => n && !known.has(n.toLowerCase())))];
+    if (fresh.length) {
+      const palette = ["#7cc4ff", "#ffb347", "#b28dff", "#ff5c9a", "#8db600", "#ffd25c"];
+      const added: CastMember[] = fresh.map((n, i) => {
+        const name = n.charAt(0) + n.slice(1).toLowerCase();
+        const w = { id: uid("w"), name: "Default", description: "" };
+        return { id: uid("cast"), name, role: "Character", face: "", wardrobe: [w], activeWardrobe: w.id, voice: { name: "Neutral", style: "natural", pitch: 1 }, styleTags: [], locked: false, color: palette[i % palette.length] };
+      });
+      st.update("cast", (v) => [...v, ...added]);
+    }
     setBusy(false);
   };
 
@@ -237,6 +267,16 @@ export default function DramaStudio() {
   };
 
   if (!hydrated) return <div className="h-[60vh] grid place-items-center text-w40">Loading Drama Studio…</div>;
+  if (!ep)
+    return (
+      <DramaStart
+        importing={importing}
+        message={importMsg}
+        onFile={importScript}
+        onIdea={() => newProject("", "")}
+        accept={SCRIPT_ACCEPT}
+      />
+    );
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-36px)]">
@@ -245,24 +285,27 @@ export default function DramaStudio() {
         <aside className="rounded-16 bg-[#262d32] border border-w5 p-3 flex flex-col gap-4">
           <div>
             <div className="flex items-center justify-between">
-              <h2 className="text-14 font-semibold">Episodes</h2>
-              <button
-                onClick={() => {
-                  const e: Episode = { id: uid("ep"), title: `Episode ${st.episodes.length + 1}`, logline: "", script: "", scenes: [], updatedAt: Date.now() };
-                  st.set({ episodes: [...st.episodes, e], activeEpisode: e.id });
-                }}
-                className="text-12 font-semibold flex items-center gap-1"
-              >
-                <Plus size={10} /> New
+              <h2 className="text-14 font-semibold">My projects</h2>
+              <button onClick={() => newProject()} className="text-12 font-semibold flex items-center gap-1">
+                <Plus size={10} /> New project
               </button>
             </div>
             <ul className="mt-2 flex flex-col gap-1">
               {st.episodes.map((e) => (
-                <li key={e.id}>
-                  <button onClick={() => st.set({ activeEpisode: e.id })} className={`w-full text-left rounded-8 px-2 py-1.5 text-12 ${e.id === ep.id ? "bg-w10 font-semibold" : "text-w60 hover:bg-w5"}`}>
-                    {e.title}
-                    <span className="block text-[10px] text-w40">{e.scenes.length} scenes</span>
+                <li key={e.id} className="group flex items-center gap-1">
+                  <button onClick={() => st.set({ activeEpisode: e.id })} className={`flex-1 min-w-0 text-left rounded-8 px-2 py-1.5 text-12 ${e.id === ep.id ? "bg-w10 font-semibold" : "text-w60 hover:bg-w5"}`}>
+                    <span className="block truncate">{e.title}</span>
+                    <span className="block text-[10px] text-w40">{e.scenes.length ? `${e.scenes.length} scenes` : e.script.trim() ? "not broken down yet" : "empty"}</span>
                   </button>
+                  {confirmDel === e.id ? (
+                    <button onClick={() => deleteProject(e.id)} onBlur={() => setConfirmDel("")} className="shrink-0 h-7 px-2 rounded-6 bg-[#ff5c9a] text-dark text-[10px] font-bold">
+                      Delete?
+                    </button>
+                  ) : (
+                    <button aria-label={`Delete ${e.title}`} onClick={() => setConfirmDel(e.id)} className="shrink-0 w-7 h-7 rounded-6 grid place-items-center text-w40 hover:text-white hover:bg-w5">
+                      <Trash size={12} />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -284,11 +327,21 @@ export default function DramaStudio() {
             </div>
             <ul className="mt-2 flex flex-col gap-1">
               {st.cast.map((c) => (
-                <li key={c.id}>
-                  <button onClick={() => setCastSel(c.id)} className={`w-full flex items-center gap-2 rounded-8 px-2 py-1.5 text-12 ${c.id === cSel?.id ? "bg-w10 font-semibold" : "text-w60 hover:bg-w5"}`}>
+                <li key={c.id} className="flex items-center gap-1">
+                  <button onClick={() => setCastSel(c.id)} className={`flex-1 min-w-0 flex items-center gap-2 rounded-8 px-2 py-1.5 text-12 ${c.id === cSel?.id ? "bg-w10 font-semibold" : "text-w60 hover:bg-w5"}`}>
                     <span className="w-6 h-6 rounded-full shrink-0" style={{ background: artGradient(c.name.length * 41) }} />
                     <span className="flex-1 text-left truncate">{c.name}</span>
                     {c.locked && <Lock size={10} className="text-lime" />}
+                  </button>
+                  <button
+                    aria-label={`Remove ${c.name}`}
+                    onClick={() => {
+                      st.update("cast", (v) => v.filter((x) => x.id !== c.id));
+                      st.set({ castIds: st.castIds.filter((x) => x !== c.id) });
+                    }}
+                    className="shrink-0 w-7 h-7 rounded-6 grid place-items-center text-w40 hover:text-white hover:bg-w5"
+                  >
+                    <Trash size={12} />
                   </button>
                 </li>
               ))}
@@ -296,7 +349,7 @@ export default function DramaStudio() {
           </div>
           <div className="rounded-12 bg-w5 p-2.5">
             <p className="text-12 font-semibold mb-1.5">Batch routing</p>
-            <RouteSelector mode={st.routeMode} lock={st.lockPlatform} onChange={(m, l) => st.set({ routeMode: m, lockPlatform: l })} />
+            <RouteSelector modelId={st.modelId} mode={st.routeMode} lock={st.lockPlatform} onChange={(m, l) => st.set({ routeMode: m, lockPlatform: l })} />
             <p className="text-[10px] text-w40 mt-1.5">Batch renders always show a pre-flight cost check first.</p>
           </div>
         </aside>
@@ -431,6 +484,58 @@ export default function DramaStudio() {
         <Timeline />
       </div>
       <Preflight lines={pending?.lines || null} onCancel={() => setPending(null)} onApprove={approve} />
+    </div>
+  );
+}
+
+/** First screen when there are no projects: upload a script or start from an idea. Nothing is pre-filled or locked. */
+function DramaStart({ importing, message, onFile, onIdea, accept }: { importing: boolean; message: string; onFile: (f: File) => void; onIdea: () => void; accept: string }) {
+  const file = useRef<HTMLInputElement>(null);
+  return (
+    <div className="min-h-[calc(100vh-120px)] grid place-items-center p-4">
+      <div className="w-full max-w-[640px] flex flex-col gap-4">
+        <div className="text-center">
+          <h1 className="font-display font-bold text-32">Short Drama</h1>
+          <p className="text-14 text-w60 mt-1">Turn a script or a story idea into a series: cast, scenes, shots and a cut, with Claude as the showrunner.</p>
+        </div>
+        <button
+          onClick={() => file.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const f = e.dataTransfer.files?.[0];
+            if (f) onFile(f);
+          }}
+          disabled={importing}
+          className="rounded-16 border border-dashed border-w10 bg-[#262d32] hover:bg-w5 py-10 flex flex-col items-center gap-1.5 disabled:opacity-60"
+        >
+          <Film size={22} />
+          <span className="text-16 font-semibold">{importing ? "Reading script…" : "Upload your script"}</span>
+          <span className="text-12 text-w50">PDF, DOCX, FDX, TXT or MD · up to 10 MB · or drop it here</span>
+        </button>
+        <input
+          ref={file}
+          type="file"
+          accept={accept}
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) onFile(f);
+          }}
+        />
+        {message && <p className={`text-12 text-center ${message.startsWith("Loaded") ? "text-lime" : "text-[#ff5c9a]"}`}>{message}</p>}
+        <div className="flex items-center gap-3 text-12 text-w40">
+          <span className="flex-1 h-px bg-w10" /> or <span className="flex-1 h-px bg-w10" />
+        </div>
+        <button onClick={onIdea} className="btn-lime h-11 rounded-12 text-14 font-semibold">
+          Start from a story idea
+        </button>
+        <div className="rounded-16 bg-[#262d32] border border-w5 p-4 text-center">
+          <p className="text-14 font-semibold">My projects</p>
+          <p className="text-12 text-w50 mt-1">No projects yet. Upload a script or start from an idea to create your first one.</p>
+        </div>
+      </div>
     </div>
   );
 }

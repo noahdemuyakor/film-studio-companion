@@ -40,7 +40,7 @@ const sampleCast: CastMember[] = [
     activeWardrobe: "w_maya_1",
     voice: { name: "Warm alto", style: "measured, quietly urgent", pitch: 1 },
     styleTags: ["naturalistic", "35mm grain", "warm skin tones"],
-    locked: true,
+    locked: false,
     color: "#8db600",
   },
   {
@@ -52,7 +52,7 @@ const sampleCast: CastMember[] = [
     activeWardrobe: "w_jonah_1",
     voice: { name: "Low baritone", style: "guarded, soft-spoken", pitch: 0.85 },
     styleTags: ["naturalistic", "35mm grain"],
-    locked: true,
+    locked: false,
     color: "#ff4d8d",
   },
 ];
@@ -137,7 +137,6 @@ export interface StudioState {
   reset: () => void;
 }
 
-const firstEpisode: Episode = { id: "ep_1", title: "Episode 1 — The Last Ferry", logline: "", script: SAMPLE_SCRIPT, scenes: [], updatedAt: Date.now() };
 
 const initial = () => ({
   claudeKeyEnc: "",
@@ -158,8 +157,8 @@ const initial = () => ({
   images: [] as Shot[],
   vault: sampleVault,
   cast: sampleCast,
-  episodes: [firstEpisode],
-  activeEpisode: firstEpisode.id,
+  episodes: [] as Episode[],
+  activeEpisode: "",
   nodes: initialNodes,
   edges: initialEdges,
   clips: initialClips,

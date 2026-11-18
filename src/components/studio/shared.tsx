@@ -88,18 +88,36 @@ export function ShotCard({ shot, onRerun, onChain, onTimeline, onDelete }: { sho
   );
 }
 
-export function RouteSelector({ mode, lock, onChange, compact }: { mode: RouteMode; lock: string; onChange: (m: RouteMode, lock: string) => void; compact?: boolean }) {
+/** Short label for one platform in a "Pay with" list: name, balance and anything that stops it being used. */
+function payLabel(p: { name: string; balance: number; enabled: boolean; status: string }, modelOk: boolean | null) {
+  const note = !p.enabled ? " · switched off" : modelOk === false ? " · doesn't offer this model" : p.status !== "connected" ? " · not connected (preview only)" : "";
+  return `${p.name} · ${p.balance.toLocaleString()} cr${note}`;
+}
+
+/**
+ * Whose credits pay for a generation: Auto (cheapest credit), a platform the person chooses (never swapped for another),
+ * or Auto with a cost check before batch renders. Pass modelId to flag platforms that don't offer that model.
+ */
+export function RouteSelector({ mode, lock, onChange, compact, modelId }: { mode: RouteMode; lock: string; onChange: (m: RouteMode, lock: string) => void; compact?: boolean; modelId?: string }) {
   const platforms = useStudio((s) => s.platforms);
   const modes: { id: RouteMode; label: string }[] = [
-    { id: "cheapest", label: compact ? "Cheapest" : "Cheapest credit" },
-    { id: "lock", label: compact ? "Lock" : "Feature lock" },
-    { id: "preflight", label: compact ? "Pre-flight" : "Pre-flight confirm" },
+    { id: "cheapest", label: compact ? "Auto" : "Auto · cheapest" },
+    { id: "lock", label: "I choose" },
+    { id: "preflight", label: compact ? "Pre-flight" : "Pre-flight check" },
   ];
+  const offers = (p: (typeof platforms)[number]) => (modelId ? p.models[modelId] !== undefined : null);
+  const chosen = platforms.find((p) => p.id === lock);
+  const warn = mode === "lock" && (!chosen ? "Pick whose credits pay." : !chosen.enabled ? `${chosen.name} is switched off in Settings.` : offers(chosen) === false ? `${chosen.name} doesn't offer this model.` : "");
+  const list = [...platforms].sort((a, b) => Number(b.enabled) - Number(a.enabled) || Number(offers(b) !== false) - Number(offers(a) !== false) || b.balance - a.balance);
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" aria-label="Pay with">
       <div className="grid grid-cols-3 gap-1 p-0.5 rounded-8 bg-w5">
         {modes.map((m) => (
-          <button key={m.id} onClick={() => onChange(m.id, lock)} className={`h-7 rounded-6 text-[11px] font-semibold ${mode === m.id ? "bg-w10 text-white" : "text-w50"}`}>
+          <button
+            key={m.id}
+            onClick={() => onChange(m.id, m.id === "lock" && !lock ? list.find((p) => p.enabled && offers(p) !== false)?.id || "" : lock)}
+            className={`h-7 rounded-6 text-[11px] font-semibold ${mode === m.id ? "bg-w10 text-white" : "text-w50"}`}
+          >
             {m.label}
           </button>
         ))}
@@ -107,15 +125,38 @@ export function RouteSelector({ mode, lock, onChange, compact }: { mode: RouteMo
       {mode === "lock" && (
         <div className="rounded-8 bg-w5 px-2 h-8 flex items-center">
           <Select
-            label="Locked platform"
+            label="Pay with"
             value={lock}
             onChange={(v) => onChange("lock", v)}
-            options={[{ id: "", label: "Choose platform…" }, ...platforms.map((p) => ({ id: p.id, label: `${p.name}${p.features[0] ? ` — ${p.features[0]}` : ""}` }))]}
+            options={[{ id: "", label: "Pay with…" }, ...list.map((p) => ({ id: p.id, label: payLabel(p, offers(p)) }))]}
             className="text-12"
           />
         </div>
       )}
+      {warn && <p className="text-[10px] text-[#ff5c9a]">{warn}</p>}
     </div>
+  );
+}
+
+/** Compact "Pay with" picker for prompt bars: Auto (cheapest credit) or one platform, which is then always used. */
+export function PayWith({ modelId }: { modelId?: string }) {
+  const st = useStudio();
+  const offers = (p: (typeof st.platforms)[number]) => (modelId ? p.models[modelId] !== undefined : null);
+  const value = st.routeMode === "lock" ? st.lockPlatform : "";
+  const list = [...st.platforms].sort((a, b) => Number(b.enabled) - Number(a.enabled) || Number(offers(b) !== false) - Number(offers(a) !== false) || b.balance - a.balance);
+  const chosen = st.platforms.find((p) => p.id === value);
+  const bad = chosen && (!chosen.enabled || offers(chosen) === false);
+  return (
+    <span className={`h-8 px-2 rounded-8 bg-w5 flex items-center gap-1 text-12 font-semibold ${bad ? "ring-1 ring-[#ff5c9a]" : ""}`} title={bad ? `${chosen!.name} can't run this model — pick another` : "Whose credits pay for this generation"}>
+      <span className="text-w50">Pay with</span>
+      <Select
+        label="Pay with"
+        value={value}
+        onChange={(v) => st.set(v ? { routeMode: "lock", lockPlatform: v } : { routeMode: "cheapest" })}
+        options={[{ id: "", label: "Auto · cheapest" }, ...list.map((p) => ({ id: p.id, label: payLabel(p, offers(p)) }))]}
+        className="text-12"
+      />
+    </span>
   );
 }
 

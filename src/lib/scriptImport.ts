@@ -146,12 +146,15 @@ function normaliseScreenplay(t: string): string {
     const l = lines[i];
     const name = l.replace(/\s*\((V\.O\.|O\.S\.|CONT'D|O\.C\.)\)\s*$/i, "");
     const isCue = /^[A-Z][A-Z0-9 .'-]{1,30}$/.test(name) && !/^(INT|EXT|INT\/EXT|I\/E)[. ]/.test(name) && !/(CUT TO|FADE|DISSOLVE)/.test(name);
-    if (isCue && lines[i + 1] && !/^[A-Z0-9 .'-]+$/.test(lines[i + 1])) {
+    const allCaps = (s: string) => /[A-Z]/.test(s) && !/[a-z]/.test(s); // scene headings, cues, transitions
+    if (isCue && lines[i + 1] && !allCaps(lines[i + 1])) {
       const said: string[] = [];
       let j = i + 1;
-      while (j < lines.length && lines[j] && !/^\(.*\)$/.test(lines[j])) said.push(lines[j++]);
-      while (j < lines.length && /^\(.*\)$/.test(lines[j])) j++;
-      while (j < lines.length && lines[j] && !/^[A-Z][A-Z0-9 .'-]{1,30}$/.test(lines[j])) said.push(lines[j++]);
+      // the speech runs until a blank line or the next all-caps line (a scene heading or another speaker); acting notes in (…) are dropped
+      while (j < lines.length && lines[j] && !allCaps(lines[j])) {
+        if (!/^\(.*\)$/.test(lines[j])) said.push(lines[j]);
+        j++;
+      }
       out.push(`${name}: ${said.join(" ")}`);
       i = j - 1;
     } else out.push(l);
