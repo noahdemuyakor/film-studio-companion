@@ -64,7 +64,7 @@ import {
   Wand,
 } from "../Icons";
 import { Select } from "../ui";
-import { durationOptions, nearestRes, PayWith, Preview, RefPicker, resolutionOptions, RouteSelector, type PickedRef } from "./shared";
+import { durationOptions, nearestRes, PayWith, Preview, RefPicker, resolutionOptions, RouteSelector, usePrice, type PickedRef } from "./shared";
 import Timeline from "./Timeline";
 import { useHydrated } from "../Hydrate";
 
@@ -227,7 +227,8 @@ function MediaNode({ id, data, selected }: NodeProps) {
   const [full, setFull] = useState(false);
   const [msg, setMsg] = useState("");
   const play = st.canvasPrefs.playOnHover;
-  const cost = model ? estimateCost(model, duration || 5) : 0;
+  const cost = usePrice(model, duration || 5);
+  const live = st.liveRenders;
   const w = kind === "voice" ? 260 : aspect === "9:16" || aspect === "3:4" ? 200 : aspect === "1:1" ? 240 : 300;
   // Flick has no upload tool: it can only use references that were themselves made on Flick
   const payPf = st.routeMode === "lock" ? st.platforms.find((p) => p.id === st.lockPlatform) : undefined;
@@ -318,8 +319,20 @@ function MediaNode({ id, data, selected }: NodeProps) {
             <img src={url} alt={String(data.title || "")} className="w-full h-full object-cover" />
           )
         ) : shot?.status === "done" && shot.simulated ? (
-          <div className="absolute inset-0" style={{ background: artGradient(prompt.length * 13 + 7) }}>
-            <span className="absolute left-2 top-2 text-[10px] font-semibold bg-black/60 rounded-6 px-1.5 py-0.5">Preview render</span>
+          <div className="absolute inset-0 grid place-items-center p-3 text-center" style={{ background: artGradient(prompt.length * 13 + 7) }}>
+            <div className="rounded-10 bg-black/70 px-3 py-2 flex flex-col items-center gap-1.5 max-w-[240px]">
+              <span className="text-12 font-semibold">Preview only</span>
+              <span className="text-[11px] text-w70 leading-4">Nothing was rendered or spent. Claude wrote the prompt; switch on Live to make the real {kind}.</span>
+              <button
+                onClick={() => {
+                  useStudio.getState().set({ liveRenders: true });
+                  setTimeout(run, 0);
+                }}
+                className="nodrag h-7 px-2.5 rounded-6 bg-lime text-dark text-12 font-semibold"
+              >
+                Render for real · {cost} cr
+              </button>
+            </div>
           </div>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-center px-3">
@@ -470,9 +483,10 @@ function MediaNode({ id, data, selected }: NodeProps) {
               </Chip>
             )}
             <button disabled={busy} onClick={run} className="h-8 px-3 rounded-8 bg-lime text-dark font-semibold flex items-center gap-1.5 disabled:opacity-60">
-              <Send size={12} /> {busy ? "Working…" : kind === "voice" ? "Speak" : `Generate · ${cost * Math.max(1, Number(data.count || 1))} cr`}
+              <Send size={12} /> {busy ? "Working…" : kind === "voice" ? "Speak" : live ? `Generate · ${cost * Math.max(1, Number(data.count || 1))} cr` : "Preview · free"}
             </button>
           </div>
+          {!live && kind !== "voice" && <p className="text-[11px] text-w50">Preview is on: Claude writes the prompt but no image or video is made. Tick Live to render for real.</p>}
           {msg && <p className="text-[11px] text-[#ff5c9a]">{msg}</p>}
           {shot?.route && <p className="text-[10px] text-w40">{shot.route}</p>}
         </div>

@@ -11,7 +11,7 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Bars, Book, ChevronR, Close, Folder, Image as ImageIcon, Lock, Mic, Plus, Speaker, Spark, Wave } from "../Icons";
 import { Chip, Select, Slider } from "../ui";
-import { durationOptions, nearestRes, RefPicker, resolutionOptions, RouteSelector, ShotCard, Vault, type PickedRef } from "./shared";
+import { durationOptions, nearestRes, RefPicker, resolutionOptions, RouteSelector, ShotCard, usePrice, Vault, type PickedRef } from "./shared";
 import { nearest } from "@/lib/adapters";
 import Preflight from "./Preflight";
 import { useHydrated } from "../Hydrate";
@@ -86,7 +86,7 @@ export default function CinemaStudio() {
   const videoModels = st.models.filter((m) => m.kind === "video" && m.enabled);
   const setS = (p: Partial<CinemaSettings>) => st.set({ settings: { ...s, ...p } });
   const total = Math.min(30, s.duration + extend.back + extend.fwd);
-  const est = Math.round(model.cost + model.costPerSecond * total);
+  const est = usePrice(model, total);
   const prevShot = st.shots.find((x) => x.id === st.firstFrame);
   const firstRef = st.vault.find((r) => r.id === st.firstFrame);
   const endRef = st.vault.find((r) => r.id === st.endFrame);
@@ -467,7 +467,7 @@ export default function CinemaStudio() {
           <Mic size={14} /> Controls
         </button>
         <button onClick={generate} className="btn-lime flex-1 h-12 rounded-12 text-16 font-semibold">
-          Generate · {est}
+          {st.liveRenders ? `Generate · ${est} cr` : "Preview · free"}
         </button>
       </div>
       <Preflight

@@ -9,7 +9,7 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Book, ChevronR, Close, Diamond, Expand, Grid, Minus, Plus, Spark } from "../Icons";
 import { Select } from "../ui";
-import { PayWith, RefPicker, ShotCard, type PickedRef } from "./shared";
+import { PayWith, RefPicker, ShotCard, usePrice, type PickedRef } from "./shared";
 import { useHydrated } from "../Hydrate";
 
 export default function ImageStudio() {
@@ -25,6 +25,7 @@ export default function ImageStudio() {
   const [refs, setRefs] = useState<PickedRef[]>([]);
   const imageModels = st.models.filter((m) => m.kind === "image" && m.enabled);
   const model = modelById(st.models, st.imageModelId);
+  const price = usePrice(model, 0);
 
   const [hint, setHint] = useState("");
   const generate = async () => {
@@ -158,10 +159,8 @@ export default function ImageStudio() {
           </div>
           <aside className="shrink-0 w-[92px] md:w-[120px] flex flex-col gap-1.5">
           <button type="submit" disabled={busy} className="btn-lime flex-1 rounded-12 text-12 font-bold flex flex-col items-center justify-center gap-1 disabled:opacity-60">
-            {busy ? "WORKING…" : "GENERATE"}
-            <span className="flex items-center gap-1">
-              <Spark size={12} /> {model.cost * batch}
-            </span>
+            {busy ? "WORKING…" : st.liveRenders ? "GENERATE" : "PREVIEW"}
+            <span className="flex items-center gap-1">{st.liveRenders ? <><Spark size={12} /> {price * batch}</> : "free"}</span>
           </button>
           </aside>
         </form>

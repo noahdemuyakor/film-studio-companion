@@ -1,7 +1,9 @@
 "use client";
 import { useRef, useState } from "react";
 import { useStudio, VAULT_LIMIT, modelById } from "@/lib/store";
-import type { RefKind, RouteMode, Shot } from "@/lib/types";
+import { routeLocal } from "@/lib/bridge";
+import { estimateCost } from "@/lib/router";
+import type { ModelDef, RefKind, RouteMode, Shot } from "@/lib/types";
 import { artGradient, fileToDataUrl, uid } from "@/lib/util";
 import { Badge, Select } from "../ui";
 import { Copy, Film, Link, Plus, Rerun, Trash } from "../Icons";
@@ -338,4 +340,14 @@ export function RefPicker({ refs, onChange, max = 10, label = "References", drop
       )}
     </div>
   );
+}
+
+/** What a render will cost on the platform that will run it: the one chosen under "Pay with", or the cheapest on Auto. */
+export function usePrice(model: ModelDef | undefined, duration = 5): number {
+  const routeMode = useStudio((x) => x.routeMode);
+  const lock = useStudio((x) => x.lockPlatform);
+  const platforms = useStudio((x) => x.platforms);
+  if (!model) return 0;
+  const plan = routeLocal(model, routeMode === "lock" ? "lock" : "cheapest", lock, platforms, duration);
+  return plan.platformId ? plan.cost : plan.alternatives.find((a) => a.platformId === lock)?.cost ?? estimateCost(model, duration);
 }
