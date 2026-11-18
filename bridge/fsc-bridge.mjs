@@ -179,7 +179,18 @@ function findPixmax() {
       const t = readFileSync(cmd, "utf8");
       const home = t.match(/PIXMAX_CLI_HOME=([^"\r\n]+)/)?.[1];
       const run = t.match(/"([^"]+python[^"]*\.exe)"\s+"([^"]+launcher\.py)"/i);
-      if (run) return { python: run[1], launcher: run[2], home };
+      if (!run) continue;
+      // Run the active runtime's entry.py directly: the launcher re-executes itself with os.execv, which on
+      // Windows drops the quoting, so any argument with a space (every prompt) would be split into words.
+      let launcher = run[2];
+      try {
+        const cur = JSON.parse(readFileSync(join(home || dirname(dirname(run[2])), "runtime", "current.json"), "utf8"));
+        const entry = join(home || dirname(dirname(run[2])), cur.runtimeDir, "entry.py");
+        if (existsSync(entry)) launcher = entry;
+      } catch {
+        /* fall back to the launcher */
+      }
+      return { python: run[1], launcher, home };
     }
   }
   return null;
