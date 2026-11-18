@@ -704,9 +704,19 @@ function applyActions(actions: AssistantAction[], at: { x: number; y: number }):
   const sections: Record<string, Node> = {};
   const counts: Record<string, number> = {};
   const byTitle: Record<string, string> = {};
+  const reused: Node[] = [];
   let secY = at.y;
   const ensureSection = (name = "Assistant") => {
     if (sections[name]) return sections[name];
+    // a section already on the canvas with that name (or the one the user mentioned): add to it, after what's there
+    const existing = st.nodes.find((n) => n.type === "section" && String(n.data.title || "").toLowerCase().trim() === name.toLowerCase().trim());
+    if (existing) {
+      const copy: Node = { ...existing, style: { ...existing.style } };
+      sections[name] = copy;
+      counts[copy.id] = membersOf(existing, st.nodes).length;
+      reused.push(copy);
+      return copy;
+    }
     const n: Node = { id: uid("n"), type: "section", position: { x: at.x, y: secY }, zIndex: -1, style: { width: 1380, height: 420 }, data: { title: name, color: SECTION_COLORS[Object.keys(sections).length % SECTION_COLORS.length] } };
     secY += 480;
     sections[name] = n;
@@ -721,7 +731,7 @@ function applyActions(actions: AssistantAction[], at: { x: number; y: number }):
     const cols = 4;
     const pos = { x: sec.position.x + 30 + (i % cols) * 335, y: sec.position.y + 50 + Math.floor(i / cols) * 330 };
     const rows = Math.floor(i / cols) + 1;
-    sec.style = { ...sec.style, height: Math.max(Number(sec.style?.height || 420), 60 + rows * 330) };
+    sec.style = { ...sec.style, height: Math.max(Number(sec.measured?.height ?? sec.style?.height ?? 420), 60 + rows * 330) };
     const id = uid("n");
     if (a.type === "note") nodes.push({ id, type: "text", position: pos, data: { text: a.text || a.prompt || "" } });
     else nodes.push({ id, type: "media", position: pos, data: { kind: a.type, title: a.title || (a.type === "video" ? "Video" : "Image"), prompt: a.prompt || "", aspect: a.aspect || (a.type === "video" ? "16:9" : "16:9"), mode: a.type === "video" && a.from ? "frame" : undefined } });
@@ -731,10 +741,12 @@ function applyActions(actions: AssistantAction[], at: { x: number; y: number }):
       if (src) edges.push({ id: uid("e"), source: src, target: id });
     }
   });
-  st.update("nodes", (ns) => [...ns, ...nodes]);
+  // reused sections may have grown to fit their new nodes
+  st.update("nodes", (ns) => [...ns.map((n) => reused.find((r) => r.id === n.id) || n), ...nodes]);
   st.update("edges", (es) => [...es, ...edges]);
   const made = nodes.filter((n) => n.type !== "section").length;
-  return `${made} node${made === 1 ? "" : "s"} in ${Object.keys(sections).length} section${Object.keys(sections).length === 1 ? "" : "s"}`;
+  const names = Object.keys(sections);
+  return `${made} node${made === 1 ? "" : "s"} to ${names.map((n) => `“${n}”`).join(", ")}`;
 }
 
 function Assistant({ onClose }: { onClose: () => void }) {
@@ -762,7 +774,7 @@ function Assistant({ onClose }: { onClose: () => void }) {
     const system = `You are the creative assistant on an AI film studio's canvas. Talk like a helpful director: short and concrete.
 When the user wants things made, add them to the canvas with actions; nodes are only laid out, never rendered (the user presses Generate, which spends their credits).
 Reply with JSON only: {"reply": string, "actions": [{"type": "section"|"image"|"video"|"note", "title": string, "prompt": string (a vivid, model-ready visual prompt for image/video), "text": string (for notes), "section": string (section name to place it in), "aspect": "16:9"|"9:16"|"1:1", "from": string (title of an image node this video animates)}]}.
-Use one section per scene or idea. Keep prompts self-contained (subject, action, setting, shot, light, style). Use "actions": [] when just talking.`;
+Use one section per scene or idea; to add to a section that's already on the canvas, use its exact name. Keep prompts self-contained (subject, action, setting, shot, light, style). Use "actions": [] when just talking.`;
     const user = `Canvas now:\n${canvas || "(empty)"}\n\nConversation:\n${chat
       .slice(-8)
       .map((m) => `${m.role}: ${m.text}`)
