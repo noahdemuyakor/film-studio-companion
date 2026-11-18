@@ -362,7 +362,8 @@ export async function executeOnPlatform(pf: Platform, model: ModelDef, controls:
   }
   // live balance after the render when available, otherwise deduct the estimate in the manual ledger
   const live = !simulated ? await syncBalance(useStudio.getState().platforms.find((x) => x.id === pf.id)!) : null;
-  if (live === null) addLedger(pf.id, -cost, `${model.name} render${simulated ? " (preview)" : ""}`, "estimate");
+  // previews spend nothing, so they leave the wallet alone; real renders use the live balance, or deduct the estimate when there is none
+  if (live === null && !simulated) addLedger(pf.id, -cost, `${model.name} render`, "estimate");
   return { url, simulated };
 }
 
