@@ -12,6 +12,18 @@ export function durationOptions(m: { durations?: number[]; maxDuration?: number 
   return [3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30].filter((d) => d <= (m.maxDuration || 10));
 }
 
+/** Resolutions to offer for a model: the ones its platforms accept, else a common set. */
+export function resolutionOptions(m: { resolutions?: string[]; kind?: string }) {
+  if (m.resolutions?.length) return m.resolutions;
+  return m.kind === "image" ? ["1K", "2K", "4K"] : ["360p", "480p", "720p", "1080p", "2K", "4K"];
+}
+/** the offered resolution closest to the current setting (so the picker never shows a blank) */
+export function nearestRes(cur: string, opts: string[]) {
+  const h = (r: string) => (/^(\d+)p$/i.test(r) ? Number(r.slice(0, -1)) : ({ "1K": 1024, "2K": 1440, "4K": 2160, "8K": 4320 } as Record<string, number>)[r.toUpperCase()] || 0);
+  if (opts.includes(cur)) return cur;
+  return opts.reduce((a, b) => (Math.abs(h(b) - h(cur)) < Math.abs(h(a) - h(cur)) ? b : a), opts[0]);
+}
+
 export function aspectRatioCss(a: string) {
   const [w, h] = a.split(":").map(Number);
   return `${w} / ${h}`;

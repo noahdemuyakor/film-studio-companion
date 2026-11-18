@@ -75,6 +75,8 @@ export interface ModelDef {
   maxDuration: number;
   /** exact clip lengths (seconds) the model accepts, when its platforms publish them */
   durations?: number[];
+  /** output resolutions the model accepts (e.g. 480p, 720p, 1080p, 4K), when its platforms publish them */
+  resolutions?: string[];
   enabled: boolean;
   builtin: boolean;
   blurb: string;
@@ -247,11 +249,11 @@ export interface Platform {
   bridgeCode?: string;
   sample?: boolean;
   /** which built-in adapter drives real renders on this platform (detected from its tools) */
-  adapter?: "flick" | "openart" | "imagineart" | "flow";
+  adapter?: "flick" | "openart" | "imagineart" | "flow" | "pixmax";
   /** per-platform choices the adapter needs: Flick project, ImagineArt organization */
   adapterConfig?: { projectId?: string; projectName?: string; orgId?: string };
   /** registry model id -> this platform's own model id (and OpenArt mode) */
-  nativeModels?: Record<string, { id: string; mode?: string; kind: ModelKind; durations?: number[] }>;
+  nativeModels?: Record<string, { id: string; mode?: string; kind: ModelKind; durations?: number[]; resolutions?: string[] }>;
 }
 
 export interface LedgerEntry {

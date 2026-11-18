@@ -4,7 +4,7 @@ import { useStudio } from "@/lib/store";
 import { CLAUDE_MODELS, testClaude } from "@/lib/engine";
 import { encryptSecret, maskSecret } from "@/lib/secure";
 import { addLedger, bridgeHealth, bridgeModule, claudePlatformWizard, mcpDiscover, syncBalance } from "@/lib/bridge";
-import { detectAdapter, flickCreateProject, flickProjects, syncCatalog } from "@/lib/adapters";
+import { detectAdapter, flickCreateProject, flickProjects, pixmaxCanvas, pixmaxProjects, pixmaxStatus, syncCatalog } from "@/lib/adapters";
 import { MODE_LABEL } from "@/lib/platforms";
 import type { BridgeMode, Platform } from "@/lib/types";
 import { uid } from "@/lib/util";
@@ -141,6 +141,31 @@ function AdapterSetup({ p, patch }: { p: Platform; patch: (x: Partial<Platform>)
           )}
         </div>
       )}
+      {p.adapter === "pixmax" && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-w50 shrink-0">Renders go to</span>
+          {projects ? (
+            <div className="h-7 flex-1 rounded-6 bg-w10 px-2 flex items-center">
+              <Select
+                label="Pixmax project"
+                value={projects.find((x) => x.name === p.adapterConfig?.projectName)?.id || ""}
+                onChange={(v) =>
+                  run("canvas", async () => {
+                    const file = await pixmaxCanvas(v);
+                    patch({ adapterConfig: { ...p.adapterConfig, projectId: file, projectName: projects.find((x) => x.id === v)?.name } });
+                  })
+                }
+                options={[{ id: "", label: "Choose a Pixmax project…" }, ...projects.map((x) => ({ id: x.id, label: x.name }))]}
+                className="text-12"
+              />
+            </div>
+          ) : (
+            <button disabled={!!busy} onClick={() => run("projects", async () => setProjects(await pixmaxProjects()))} className="h-7 flex-1 rounded-6 bg-w10 px-2 text-left font-semibold disabled:opacity-50">
+              {busy === "projects" ? "Loading projects…" : busy === "canvas" ? "Opening canvas…" : p.adapterConfig?.projectName || "Choose a Pixmax project…"}
+            </button>
+          )}
+        </div>
+      )}
       {p.adapter === "imagineart" && <p className="text-w50">Organization: {p.adapterConfig?.orgId ? "chosen" : "picked automatically on the first render (you have one)"}.</p>}
       {p.adapter === "flow" && <p className="text-w50">Open a project in the Google Flow Chrome window before rendering. Images cost 0 credits; files are shared through the bridge.</p>}
       {p.adapter === "openart" && <p className="text-w50">Renders go to your default OpenArt project. Each one is price-checked before it starts.</p>}
@@ -177,6 +202,13 @@ function PlatformCard({ p }: { p: Platform }) {
           }
         }
         setMsg(`Connected · ${tools.length} tools${models ? ` · ${models} models` : ""}${n !== null ? ` · live balance ${n}` : ""}`);
+      } else if (p.mode === "cli" && detectAdapter(p) === "pixmax") {
+        const s = await pixmaxStatus();
+        if (!s.loggedIn) throw new Error("Pixmax CLI isn't signed in — run: pixmax auth login web");
+        patch({ status: "connected", adapter: "pixmax", note: `Signed in as ${s.name || "you"}${s.tier ? ` (${s.tier.toLowerCase()})` : ""}` });
+        setMsg("Loading Pixmax models (about a minute)…");
+        const n = await syncCatalog({ ...useStudio.getState().platforms.find((q) => q.id === p.id)!, status: "connected" });
+        setMsg(`Connected · ${n} models`);
       } else if (p.mode === "cli") {
         setMsg(await bridgeHealth());
         patch({ status: "connected", note: "CLI reachable through the local bridge" });

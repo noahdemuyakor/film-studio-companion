@@ -11,7 +11,8 @@ import type { ModelDef, ModelKind, Platform } from "./types";
 
 export type AdapterId = NonNullable<Platform["adapter"]>;
 
-export function detectAdapter(pf: Pick<Platform, "tools">): AdapterId | undefined {
+export function detectAdapter(pf: Pick<Platform, "tools"> & Partial<Pick<Platform, "mode" | "command">>): AdapterId | undefined {
+  if (pf.mode === "cli" && /pixmax/i.test(pf.command || "")) return "pixmax";
   const n = new Set(pf.tools.map((t) => t.name));
   if (n.has("openart_generate_image")) return "openart";
   if (n.has("flow_generate")) return "flow";
@@ -56,6 +57,30 @@ export interface CatalogEntry {
   credits: number; // per image, or per ~5 s of video
   mode?: string;
   durations?: number[]; // video clip lengths this platform accepts for the model
+  resolutions?: string[]; // output resolutions, in the platform's own spelling
+}
+
+/** "1080P" / "1080p" -> "1080p"; "2k" -> "2K": one spelling for comparing and showing */
+export const normRes = (r: string) => {
+  const s = String(r).trim();
+  return /^\d+p$/i.test(s) ? s.toLowerCase() : /^\d+k$/i.test(s) ? s.toUpperCase() : s;
+};
+const resHeight = (r: string) => {
+  const s = normRes(r);
+  const p = s.match(/^(\d+)p$/);
+  if (p) return Number(p[1]);
+  const k = s.match(/^(\d+)K$/);
+  return k ? ({ 1: 1024, 2: 1440, 4: 2160, 8: 4320 } as Record<string, number>)[k[1]] || Number(k[1]) * 540 : 0;
+};
+const isRes = (r: string) => resHeight(r) > 0;
+const uniqRes = (a: string[]) => [...new Set(a.map(normRes).filter(isRes))].sort((x, y) => resHeight(x) - resHeight(y));
+/** the platform's own spelling of the resolution closest to the one asked for */
+export function pickRes(want: string | undefined, allowed?: string[]): string | undefined {
+  if (!want || !allowed?.length) return undefined;
+  const ok = allowed.filter(isRes);
+  if (!ok.length) return undefined;
+  const exact = ok.find((r) => normRes(r) === normRes(want));
+  return exact || ok.reduce((a, b) => (Math.abs(resHeight(b) - resHeight(want)) < Math.abs(resHeight(a) - resHeight(want)) ? b : a));
 }
 
 const range = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, k) => a + k);
@@ -74,6 +99,19 @@ function durationTable(desc: string): Record<string, number[]> {
   });
   return out;
 }
+/** "kling-4.0, pika-2.2: 720p, 1080p" lines under a tool description's resolution rules */
+function resolutionTable(desc: string): Record<string, string[]> {
+  const sec = desc.split(/resolution \(optional\)/i)[1]?.split(/\n\s*•/)[0] || "";
+  const out: Record<string, string[]> = {};
+  sec.split("\n").forEach((line) => {
+    const m = line.match(/^\s*-\s*([^:]+):\s*(.+)$/);
+    if (!m) return;
+    const list = (m[2].match(/\b\d+[pPkK]\b/g) || []).map(normRes);
+    if (list.length) m[1].split(",").forEach((id) => (out[id.trim()] = list));
+  });
+  return out;
+}
+
 /** the length closest to what was asked for, among those allowed */
 export const nearest = (want: number, allowed?: number[]) => (allowed?.length ? allowed.reduce((a, b) => (Math.abs(b - want) < Math.abs(a - want) ? b : a)) : want);
 
@@ -87,7 +125,7 @@ function creditsFrom(v: unknown, kind: ModelKind): number {
 const FLOW_MODELS: CatalogEntry[] = [
   { native: "Nano Banana 2.1", name: "Nano Banana 2.1", kind: "image", credits: 0 },
   { native: "Nano Banana Pro", name: "Nano Banana Pro", kind: "image", credits: 0 },
-  { native: "Omni 1.1 Flash", name: "Omni 1.1 Flash", kind: "video", credits: 7, durations: [4, 6, 8, 10] },
+  { native: "Omni 1.1 Flash", name: "Omni 1.1 Flash", kind: "video", credits: 7, durations: [4, 6, 8, 10], resolutions: ["360p", "720p"] },
   { native: "Veo 3.1 - Lite", name: "Veo 3.1 Lite", kind: "video", credits: 10, durations: [8] },
   { native: "Veo 3.1 - Fast", name: "Veo 3.1 Fast", kind: "video", credits: 20, durations: [8] },
   { native: "Veo 3.1 - Quality", name: "Veo 3.1", kind: "video", credits: 100, durations: [8] },
@@ -98,10 +136,10 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
   if (adapter === "flick") {
     const out: CatalogEntry[] = [];
     for (const kind of ["image", "video"] as const) {
-      const j = parse<{ models?: { id: string; name: string; credits?: string; settings?: { duration?: unknown } }[] }>(await call(pf, "list_models", { kind }));
+      const j = parse<{ models?: { id: string; name: string; credits?: string; settings?: { duration?: unknown; resolution?: unknown } }[] }>(await call(pf, "list_models", { kind }));
       (j?.models || [])
         .filter((m) => m.id !== "auto")
-        .forEach((m) => out.push({ native: m.id, name: m.name, kind, credits: creditsFrom(m.credits, kind), durations: kind === "video" ? uniq(nums(m.settings?.duration)) : undefined }));
+        .forEach((m) => out.push({ native: m.id, name: m.name, kind, credits: creditsFrom(m.credits, kind), durations: kind === "video" ? uniq(nums(m.settings?.duration)) : undefined, resolutions: Array.isArray(m.settings?.resolution) ? (m.settings!.resolution as string[]).map(String) : undefined }));
     }
     return out;
   }
@@ -116,15 +154,17 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
       if (vid) out.push({ native: m.id, name: m.displayName, kind: "video", credits: Math.round(vid.totalCredits || 0), mode: vid.mode });
     });
     // each video model's form lists the lengths it accepts (a few at a time, to stay polite to the server)
-    const vids = out.filter((e) => e.kind === "video");
+    const vids = out;
     for (let i = 0; i < vids.length; i += 4)
       await Promise.all(
         vids.slice(i, i + 4).map(async (e) => {
           try {
             const f = parse<{ jsonSchema?: { properties?: Record<string, { enum?: unknown[]; minimum?: number; maximum?: number }> } }>(await call(pf, "openart_model_form_get", { model: e.native, mode: e.mode }));
             const props = f?.jsonSchema?.properties || {};
+            const rk = Object.keys(props).find((x) => /^resolution$/i.test(x)) || Object.keys(props).find((x) => /resolution/i.test(x));
+            if (rk && props[rk].enum) e.resolutions = props[rk].enum!.map(String).filter(isRes);
             const k = Object.keys(props).find((x) => /duration/i.test(x));
-            if (!k) return;
+            if (!k || e.kind !== "video") return;
             const d = props[k];
             e.durations = uniq(d.enum ? nums(d.enum) : d.minimum && d.maximum ? range(Math.ceil(d.minimum), Math.floor(d.maximum)) : []);
           } catch {
@@ -134,15 +174,18 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
       );
     return out;
   }
+  if (adapter === "pixmax") return pixmaxCatalog();
   // ImagineArt lists its models inside the generate tools' descriptions; it publishes no prices, so estimates are used
   const out: CatalogEntry[] = [];
   const lengths = durationTable(pf.tools.find((t) => t.name === "generate_video")?.description || "");
+  const vres = resolutionTable(pf.tools.find((t) => t.name === "generate_video")?.description || "");
+  const ires = resolutionTable(pf.tools.find((t) => t.name === "generate_image")?.description || "");
   for (const [tool, kind, est] of [["generate_image", "image", 10], ["generate_video", "video", 60]] as const) {
     const d = pf.tools.find((t) => t.name === tool)?.description || "";
     const list = d.match(/model \(optional\)[^\n]*?one of:([\s\S]*?)\.\s*\n/i)?.[1] || d.match(/model[^\n]*one of:([\s\S]*?)\n/i)?.[1] || "";
     [...list.matchAll(/"([a-zA-Z0-9.\-_]+)"/g)].forEach(([, id]) => {
       if (/edit$|kontext/.test(id)) return; // edit-only models need a source image
-      out.push({ native: id, name: id.replace(/-/g, " ").replace(/\b([a-z])/g, (c) => c.toUpperCase()).replace(/V(\d)/g, "v$1"), kind, credits: est, durations: kind === "video" ? lengths[id] : undefined });
+      out.push({ native: id, name: id.replace(/-/g, " ").replace(/\b([a-z])/g, (c) => c.toUpperCase()).replace(/V(\d)/g, "v$1"), kind, credits: est, durations: kind === "video" ? lengths[id] : undefined, resolutions: (kind === "video" ? vres : ires)[id] });
     });
   }
   return out;
@@ -167,6 +210,7 @@ function platformModel(id: string, e: CatalogEntry, pf: Platform): ModelDef {
     promptStyle: "prose",
     maxDuration: e.kind === "video" ? Math.max(...(e.durations?.length ? e.durations : [10])) : 0,
     durations: e.kind === "video" && e.durations?.length ? e.durations : undefined,
+    resolutions: e.resolutions?.length ? uniqRes(e.resolutions) : undefined,
     enabled: true,
     builtin: false,
     blurb: `Offered by ${pf.name}`,
@@ -199,8 +243,13 @@ export async function syncCatalog(pf: Platform): Promise<number> {
       m = { ...m, durations: all, maxDuration: Math.max(m.maxDuration || 0, ...all) };
       models[models.findIndex((x) => x.id === m!.id)] = m;
     }
+    if (e.resolutions?.length) {
+      const all = uniqRes([...(m.resolutions || []), ...e.resolutions]);
+      m = { ...m, resolutions: all };
+      models[models.findIndex((x) => x.id === m!.id)] = m;
+    }
     prices[m.id] = e.credits;
-    native[m.id] = { id: e.native, mode: e.mode, kind: e.kind, durations: e.durations };
+    native[m.id] = { id: e.native, mode: e.mode, kind: e.kind, durations: e.durations, resolutions: e.resolutions };
   });
   st.set({ models });
   st.update("platforms", (v) => v.map((q) => (q.id === pf.id ? { ...q, adapter, models: prices, nativeModels: native } : q)));
@@ -253,6 +302,9 @@ export async function renderOn(pf: Platform, req: RenderRequest, onLine: Line = 
   if (!adapter) throw new Error(`${pf.name} has no render adapter`);
   if (!nat) throw new Error(`${pf.name} doesn't offer this model — reconnect it in Settings to refresh its model list.`);
   if (req.kind === "video" && nat.durations?.length) req = { ...req, duration: nearest(req.duration || 5, nat.durations) };
+  // the platform's own spelling of the nearest resolution it offers; none listed -> let the platform use its default
+  req = { ...req, resolution: pickRes(req.resolution, nat.resolutions) };
+  if (adapter === "pixmax") return pixmax(pf, nat.id, req, onLine);
   if (adapter === "flick") return flick(pf, nat.id, req, onLine);
   if (adapter === "openart") return openart(pf, nat.id, nat.mode || (req.kind === "image" ? "text2image" : "text2video"), req, onLine);
   if (adapter === "imagineart") return imagine(pf, nat.id, req, onLine);
@@ -283,7 +335,7 @@ async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Li
   let job: string;
   if (req.kind === "image") {
     onLine(`Flick: ${model}`);
-    job = await start("generate_image", { prompt: req.prompt, model, aspect_ratio: req.aspect, max_credits: req.maxCredits });
+    job = await start("generate_image", { prompt: req.prompt, model, aspect_ratio: req.aspect, max_credits: req.maxCredits, ...(req.resolution ? { settings: { resolution: req.resolution } } : {}) });
     await wait(job, "image");
   } else {
     // Flick animates an image: make a 1-credit first frame, then the video
@@ -291,7 +343,7 @@ async function flick(pf: Platform, model: string, req: RenderRequest, onLine: Li
     const frame = await start("generate_image", { prompt: req.prompt, model: "gpt-image-2", settings: { quality: "low", resolution: "1K" }, aspect_ratio: req.aspect, max_credits: 3 });
     await wait(frame, "first frame");
     onLine(`Flick: ${model} video…`);
-    job = await start("generate_video", { prompt: req.prompt, start_frame_media_id: frame, model, duration: String(Math.round(req.duration || 5)), aspect_ratio: req.aspect, max_credits: req.maxCredits });
+    job = await start("generate_video", { prompt: req.prompt, start_frame_media_id: frame, model, duration: String(Math.round(req.duration || 5)), aspect_ratio: req.aspect, max_credits: req.maxCredits, ...(req.resolution ? { settings: { resolution: req.resolution } } : {}) });
     await wait(job, "video");
   }
   const d = parse<{ media?: { url: string }[] }>(await call(pf, "download_media", { project_id, media_ids: [job] }));
@@ -320,9 +372,11 @@ async function openart(pf: Platform, model: string, mode: string, req: RenderReq
     const best = opts?.length ? opts.reduce((a, b) => (Math.abs(Number(b) - want) < Math.abs(Number(a) - want) ? b : a)) : want;
     params[dur] = props[dur].type === "string" ? String(best) : Number(best);
   }
-  const res = pick(/^resolution$/i);
-  if (res && req.resolution && props[res].enum?.map(String).map((x) => x.toLowerCase()).includes(req.resolution.toLowerCase()))
-    params[res] = props[res].enum!.find((x) => String(x).toLowerCase() === req.resolution!.toLowerCase());
+  const res = pick(/^resolution$/i) || pick(/resolution/i);
+  if (res && req.resolution) {
+    const hit = props[res].enum?.find((x) => normRes(String(x)) === normRes(req.resolution!));
+    if (hit !== undefined || !props[res].enum) params[res] = hit ?? req.resolution;
+  }
   const q = parse<{ items?: { totalCredits: number }[]; totalCredits?: number }>(await call(pf, "openart_model_cost", { model, mode, params }));
   const price = q?.items?.[0]?.totalCredits ?? q?.totalCredits;
   if (typeof price === "number" && price > req.maxCredits) throw new Error(`OpenArt quotes ${price} credits for this, above the ${req.maxCredits} cap — nothing was spent.`);
@@ -349,8 +403,8 @@ async function imagine(pf: Platform, model: string, req: RenderRequest, onLine: 
   onLine(`ImagineArt: ${model}`);
   const t =
     req.kind === "image"
-      ? await call(pf, "generate_image", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect })
-      : await call(pf, "generate_video", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, duration: String(Math.round(req.duration || 5)) });
+      ? await call(pf, "generate_image", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, ...(req.resolution ? { resolution: req.resolution } : {}) })
+      : await call(pf, "generate_video", { prompt: req.prompt, org_id, model, aspect_ratio: req.aspect, duration: String(Math.round(req.duration || 5)), ...(req.resolution ? { resolution: req.resolution } : {}) });
   const id = (parse<{ id?: string; uuid?: string }>(t)?.uuid || parse<{ id?: string }>(t)?.id || t.match(UUID)?.[0]) as string | undefined;
   if (!id) throw new Error(`ImagineArt didn't start the job: ${t.slice(0, 200)}`);
   const media = /https?:\/\/[^\s"'<>)]+?\.(png|jpe?g|webp|gif|mp4|mov|webm)(\?[^\s"'<>)]*)?/i;
@@ -371,7 +425,10 @@ async function flow(pf: Platform, model: string, req: RenderRequest, onLine: Lin
   const scene: Record<string, unknown> = { prompt: req.prompt, type: req.kind, model, max_credits: req.maxCredits };
   if (req.kind === "video") {
     scene.aspect_ratio = req.aspect === "9:16" ? "9:16" : "16:9";
-    if (/omni/i.test(model)) scene.duration = [4, 6, 8, 10].reduce((a, b) => (Math.abs(b - req.duration) < Math.abs(a - req.duration) ? b : a));
+    if (/omni/i.test(model)) {
+      scene.duration = [4, 6, 8, 10].reduce((a, b) => (Math.abs(b - req.duration) < Math.abs(a - req.duration) ? b : a));
+      if (req.resolution) scene.resolution = req.resolution;
+    }
   } else if (["16:9", "9:16", "1:1", "4:3", "3:4"].includes(req.aspect)) scene.aspect_ratio = req.aspect;
   onLine(`Google Flow: ${model}`);
   const g = await call(pf, "flow_generate", { project: "FilmStudioCompanion", scenes: [scene] });
@@ -396,4 +453,95 @@ async function shareLocalFile(path: string): Promise<string> {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Bridge couldn't share the file: ${j.error || r.status}`);
   return `${st.bridgeUrl}/files/${encodeURIComponent(j.file)}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Pixmax: its CLI, run by the bridge's fixed /pixmax route             */
+/* ------------------------------------------------------------------ */
+
+async function pixmaxCall(body: Record<string, unknown>): Promise<unknown> {
+  const st = useStudio.getState();
+  const r = await fetch(`${st.bridgeUrl}/pixmax`, { method: "POST", headers: { "content-type": "application/json", ...(await bridgeHeaders()) }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Pixmax: ${j.error || r.status}`);
+  return j.result ?? j.raw;
+}
+
+/** Pixmax wraps lists as {data:{data:[...]}}: dig to the array */
+function pmRows(j: unknown): Record<string, unknown>[] {
+  let d: unknown = (j as { data?: unknown })?.data ?? j;
+  while (d && !Array.isArray(d) && typeof d === "object" && "data" in (d as object)) d = (d as { data: unknown }).data;
+  if (!Array.isArray(d) && d && typeof d === "object") d = (d as { models?: unknown }).models;
+  return Array.isArray(d) ? (d as Record<string, unknown>[]) : [];
+}
+
+export async function pixmaxStatus(): Promise<{ loggedIn: boolean; name?: string; tier?: string }> {
+  const j = (await pixmaxCall({ action: "status" })) as { loggedIn?: boolean; account?: { name?: string; userTier?: string } };
+  return { loggedIn: !!j?.loggedIn, name: j?.account?.name, tier: j?.account?.userTier };
+}
+
+async function pixmaxCatalog(): Promise<CatalogEntry[]> {
+  const out: CatalogEntry[] = [];
+  for (const [type, kind, est] of [["GENERATE_IMAGE", "image", 10], ["GENERATE_VIDEO", "video", 50]] as const) {
+    const models = pmRows(await pixmaxCall({ action: "models", type })).filter((m) => m.restricted !== true && m.modelCode);
+    for (let i = 0; i < models.length; i += 4)
+      await Promise.all(
+        models.slice(i, i + 4).map(async (m) => {
+          const e: CatalogEntry = { native: String(m.modelCode), name: String(m.modelName || m.modelCode), kind, credits: est };
+          try {
+            const x = (await pixmaxCall({ action: "explain", type, model: e.native })) as { params?: { name: string; options?: string[] }[] };
+            const opt = (n: string) => x?.params?.find((p) => p.name === n)?.options || [];
+            if (kind === "video") e.durations = uniq(nums(opt("duration")));
+            e.resolutions = opt("resolution").map(String).filter(isRes);
+          } catch {
+            /* keep the model without its options */
+          }
+          out.push(e);
+        }),
+      );
+  }
+  return out;
+}
+
+export async function pixmaxProjects(): Promise<{ id: string; name: string }[]> {
+  return pmRows(await pixmaxCall({ action: "projects" })).map((p) => ({ id: String(p.uuid), name: String(p.name || "Untitled") }));
+}
+
+/** the first canvas file of a project: that's where Pixmax generation nodes live */
+export async function pixmaxCanvas(project: string): Promise<string> {
+  const f = pmRows(await pixmaxCall({ action: "files", project }));
+  const file = f.find((x) => String(x.fileType || x.type || "").toUpperCase() === "FILE") || f[0];
+  if (!file) throw new Error("That Pixmax project has no canvas yet — open it once in Pixmax.");
+  return String(file.uuid || file.fileUuid);
+}
+
+async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: Line): Promise<string> {
+  const file = pf.adapterConfig?.projectId;
+  if (!file) throw new Error("Choose a Pixmax project for renders in Settings → Pixmax.");
+  onLine(`Pixmax: ${model} (this waits until the render is done)…`);
+  const r = await pixmaxCall({
+    action: req.kind,
+    prompt: req.prompt,
+    file,
+    model,
+    aspect: req.aspect,
+    resolution: req.resolution,
+    duration: req.kind === "video" ? String(Math.round(req.duration || 5)) : undefined,
+  });
+  const text = JSON.stringify(r ?? "");
+  const fail = text.match(/"(?:status|taskStatus)"\s*:\s*"(FAILED|ABORTED)"/);
+  // results: {webUrl:"/static/...", ossDomain:"https://..."} or full URLs
+  const urls: string[] = [];
+  const walk = (o: unknown) => {
+    if (!o || typeof o !== "object") return;
+    const x = o as Record<string, unknown>;
+    if (typeof x.webUrl === "string" && /\.(png|jpe?g|webp|gif|mp4|mov|webm)$/i.test(x.webUrl) && !/_(preview|thumbnail)\./.test(x.webUrl))
+      urls.push(/^https?:/.test(x.webUrl) ? x.webUrl : `${String(x.ossDomain || "https://console.pixmax.ai")}${x.webUrl}`);
+    Object.values(x).forEach(walk);
+  };
+  walk(r);
+  if (!urls.length) urls.push(...(text.match(/https?:\/\/[^"\\\s]+?\.(png|jpe?g|webp|mp4|mov|webm)/gi) || []).filter((u) => !/_(preview|thumbnail)\./.test(u)));
+  if (urls.length) return urls[urls.length - 1];
+  const msg = text.match(/"(?:providerErrorMsg|errMessage|error)"\s*:\s*"([^"]+)"/)?.[1];
+  throw new Error(fail ? `Pixmax ${fail[1].toLowerCase()}${msg ? `: ${msg}` : ""}` : `Pixmax returned no file${msg ? `: ${msg}` : ""}`);
 }

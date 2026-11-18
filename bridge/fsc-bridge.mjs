@@ -195,6 +195,7 @@ function runPixmax(res, body) {
   else if (a === "projects") args = ["--json", "project", "list"];
   else if (a === "files" && pmSafe(body.project)) args = ["--json", "project", "files", "--project", body.project];
   else if (a === "models" && /^GENERATE_(IMAGE|VIDEO)$/.test(body.type)) args = ["--json", "model", "search", "--type", body.type];
+  else if (a === "explain" && /^GENERATE_(IMAGE|VIDEO)$/.test(body.type) && pmSafe(body.model)) args = ["--json", "model", "explain", body.model, "--type", body.type];
   else if ((a === "image" || a === "video") && body.prompt && pmSafe(body.file) && (!body.model || pmSafe(body.model))) {
     const label = `FSC ${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
     args = a === "image" ? ["--json", "image", "generate", label] : ["--json", "video", "text-to-video", label];

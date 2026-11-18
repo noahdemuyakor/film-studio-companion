@@ -11,7 +11,7 @@ import { uid } from "@/lib/util";
 import Scene from "../Scene";
 import { At, Bars, Book, ChevronR, Close, Folder, Image as ImageIcon, Lock, Mic, Plus, Speaker, Spark, Wave } from "../Icons";
 import { Chip, Select, Slider } from "../ui";
-import { durationOptions, RouteSelector, ShotCard, Vault } from "./shared";
+import { durationOptions, nearestRes, resolutionOptions, RouteSelector, ShotCard, Vault } from "./shared";
 import { nearest } from "@/lib/adapters";
 import Preflight from "./Preflight";
 import { useHydrated } from "../Hydrate";
@@ -245,10 +245,14 @@ export default function CinemaStudio() {
                 <Bars size={14} className="text-lime shrink-0" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 shrink-0">
+            <div className="grid grid-cols-3 gap-2 shrink-0">
               <div className="rounded-12 bg-w5 px-3 py-2">
                 <span className="block text-12 text-w50 font-semibold">Duration</span>
                 <Select label="Duration" value={String(nearest(s.duration, durationOptions(model)))} onChange={(v) => setS({ duration: Number(v) })} options={durationOptions(model).map((d) => ({ id: String(d), label: `${d}s` }))} />
+              </div>
+              <div className="rounded-12 bg-w5 px-3 py-2">
+                <span className="block text-12 text-w50 font-semibold">Resolution</span>
+                <Select label="Video resolution" value={nearestRes(s.resolution, resolutionOptions(model))} onChange={(v) => setS({ resolution: v })} options={resolutionOptions(model)} />
               </div>
               <div className="rounded-12 bg-w5 px-3 py-2">
                 <span className="block text-12 text-w50 font-semibold">Aspect Ratio</span>
@@ -334,7 +338,7 @@ export default function CinemaStudio() {
               </div>
               <div>
                 <span className="text-12 text-w50 font-semibold">Resolution</span>
-                <Select label="Resolution" value={s.resolution} onChange={(v) => setS({ resolution: v })} options={["720p", "1080p", "2K", "4K"]} />
+                <Select label="Resolution" value={nearestRes(s.resolution, resolutionOptions(model))} onChange={(v) => setS({ resolution: v })} options={resolutionOptions(model)} />
               </div>
             </div>
           </>
