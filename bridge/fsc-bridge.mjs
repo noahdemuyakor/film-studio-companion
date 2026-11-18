@@ -215,6 +215,9 @@ function runPixmax(res, body) {
     if (pmSafe(body.aspect)) args.push("--aspect-ratio", body.aspect);
     if (pmSafe(body.resolution)) args.push("--resolution", body.resolution);
     if (a === "video" && pmSafe(body.duration)) args.push("--duration", String(body.duration));
+    // the model's other required settings (e.g. quality), filled from its own defaults by the studio
+    for (const [k, v] of Object.entries(body.extra && typeof body.extra === "object" ? body.extra : {}))
+      if (/^[A-Za-z][A-Za-z0-9_.]{0,40}$/.test(k) && /^[\w.:-]{1,40}$/.test(String(v))) args.push("-s", `${k}=${v}`);
     if (a === "image") args.push("--run");
     args.push("--allow-failed", "--timeout", "1500");
   } else return send(res, 400, { error: "Unsupported Pixmax request" });

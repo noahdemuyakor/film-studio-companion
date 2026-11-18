@@ -515,9 +515,28 @@ export async function pixmaxCanvas(project: string): Promise<string> {
   return String(file.uuid || file.fileUuid);
 }
 
+const pmDefaults: Record<string, Record<string, string>> = {};
+/** defaults for the model's settings the studio doesn't control (Pixmax fails a task with any required one missing) */
+async function pixmaxExtras(model: string, kind: ModelKind): Promise<Record<string, string>> {
+  const key = `${kind}|${model}`;
+  if (!pmDefaults[key]) {
+    const x = (await pixmaxCall({ action: "explain", type: kind === "image" ? "GENERATE_IMAGE" : "GENERATE_VIDEO", model })) as { params?: { name: string; default?: unknown; options?: unknown[] }[] };
+    const skip = new Set(["prompt", "model", "resolution", "aspectRatio", "duration", "count", "referModel", "nodeType"]);
+    const out: Record<string, string> = {};
+    (x?.params || []).forEach((p) => {
+      if (skip.has(p.name)) return;
+      const v = p.default ?? p.options?.[0];
+      if (v !== undefined && v !== null && String(v) !== "") out[p.name] = String(v);
+    });
+    pmDefaults[key] = out;
+  }
+  return pmDefaults[key];
+}
+
 async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: Line): Promise<string> {
   const file = pf.adapterConfig?.projectId;
   if (!file) throw new Error("Choose a Pixmax project for renders in Settings → Pixmax.");
+  const extra = await pixmaxExtras(model, req.kind);
   onLine(`Pixmax: ${model} (this waits until the render is done)…`);
   const r = await pixmaxCall({
     action: req.kind,
@@ -527,6 +546,7 @@ async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: L
     aspect: req.aspect,
     resolution: req.resolution,
     duration: req.kind === "video" ? String(Math.round(req.duration || 5)) : undefined,
+    extra,
   });
   const text = JSON.stringify(r ?? "");
   const fail = text.match(/"(?:status|taskStatus)"\s*:\s*"(FAILED|ABORTED)"/);
@@ -542,6 +562,6 @@ async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: L
   walk(r);
   if (!urls.length) urls.push(...(text.match(/https?:\/\/[^"\\\s]+?\.(png|jpe?g|webp|mp4|mov|webm)/gi) || []).filter((u) => !/_(preview|thumbnail)\./.test(u)));
   if (urls.length) return urls[urls.length - 1];
-  const msg = text.match(/"(?:providerErrorMsg|errMessage|error)"\s*:\s*"([^"]+)"/)?.[1];
+  const msg = (text.match(/providerErrorMsgEh\\*"\s*:\s*\\*"([^"\\]+)/) || text.match(/"(?:errMessage|error|message)"\s*:\s*"([^"\\]+)"/))?.[1];
   throw new Error(fail ? `Pixmax ${fail[1].toLowerCase()}${msg ? `: ${msg}` : ""}` : `Pixmax returned no file${msg ? `: ${msg}` : ""}`);
 }

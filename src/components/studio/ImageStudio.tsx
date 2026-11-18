@@ -25,7 +25,13 @@ export default function ImageStudio() {
   const imageModels = st.models.filter((m) => m.kind === "image" && m.enabled);
   const model = modelById(st.models, st.imageModelId);
 
+  const [hint, setHint] = useState("");
   const generate = async () => {
+    if (!text.trim()) {
+      setHint("Describe the image first.");
+      return;
+    }
+    setHint("");
     setBusy(true);
     const settings = { ...st.settings, aspect: aspect === "Auto" ? "1:1" : aspect, resolution: res, duration: 0 };
     const temps: Shot[] = Array.from({ length: batch }, (_, k) => ({
@@ -113,7 +119,11 @@ export default function ImageStudio() {
       <div className="fixed md:absolute bottom-3 md:bottom-[18px] left-3 right-3 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[880px] md:max-w-[calc(100%-32px)] z-20">
         <form aria-label="Prompt" onSubmit={(e) => (e.preventDefault(), generate())} className="rounded-16 bg-[#2a3136] border border-w5 p-[10px] flex gap-3 shadow-2xl">
           <div className="flex-1 min-w-0 flex flex-col gap-3">
-          <textarea aria-label="Image prompt" value={text} onChange={(e) => setText(e.target.value)} placeholder="Describe the scene you imagine" className="w-full h-10 bg-transparent resize-none outline-none text-14 px-1.5 pt-1 placeholder:text-w50" />
+          <textarea aria-label="Image prompt" value={text} onChange={(e) => {
+            setText(e.target.value);
+            if (hint) setHint("");
+          }} placeholder="Describe the scene you imagine" className="w-full h-10 bg-transparent resize-none outline-none text-14 px-1.5 pt-1 placeholder:text-w50" />
+          {hint && <p className="text-12 text-[#ff5c9a] px-1.5">{hint}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
             <button aria-label="Add reference" className="w-8 h-8 rounded-8 bg-w5 grid place-items-center">
               <Plus size={14} />
