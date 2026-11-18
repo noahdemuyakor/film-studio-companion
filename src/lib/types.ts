@@ -258,7 +258,7 @@ export interface Platform {
   bridgeCode?: string;
   sample?: boolean;
   /** which built-in adapter drives real renders on this platform (detected from its tools) */
-  adapter?: "flick" | "openart" | "imagineart" | "flow" | "pixmax";
+  adapter?: "flick" | "openart" | "imagineart" | "flow" | "pixmax" | "pixverse";
   /** per-platform choices the adapter needs: Flick project, ImagineArt organization */
   adapterConfig?: { projectId?: string; projectName?: string; orgId?: string };
   /** registry model id -> this platform's own model id (and OpenArt mode) */

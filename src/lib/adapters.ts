@@ -3,11 +3,12 @@
  * Platform adapters: real image and video renders on the platforms you connect, paid from their credits.
  *  - catalog: every image/video model a platform offers, merged into the studio's model list
  *  - render:  submit -> wait -> return the finished file's URL, with each platform's own inputs
- * Supported: Flick, OpenArt, ImagineArt (remote MCP via the bridge) and Google Flow (local MCP).
+ * Supported: Flick, OpenArt, ImagineArt, PixVerse (remote MCP via the bridge), Google Flow (local MCP) and Pixmax (CLI).
  */
 import { useStudio } from "./store";
 import { bridgeHeaders, mcpRpc, textOf } from "./bridge";
 import type { MediaInput, ModelDef, ModelKind, Platform } from "./types";
+import { uid } from "./util";
 
 export type AdapterId = NonNullable<Platform["adapter"]>;
 
@@ -15,6 +16,7 @@ export function detectAdapter(pf: Pick<Platform, "tools"> & Partial<Pick<Platfor
   if (pf.mode === "cli" && /pixmax/i.test(pf.command || "")) return "pixmax";
   const n = new Set(pf.tools.map((t) => t.name));
   if (n.has("openart_generate_image")) return "openart";
+  if (n.has("create_video") && n.has("generation_status") && n.has("capabilities")) return "pixverse";
   if (n.has("flow_generate")) return "flow";
   if (n.has("generate_image") && n.has("wait_for_jobs") && n.has("download_media")) return "flick";
   if (n.has("generate_image") && n.has("fetch_status") && n.has("select_organization")) return "imagineart";
@@ -175,6 +177,7 @@ export async function catalog(pf: Platform, adapter: AdapterId): Promise<Catalog
     return out;
   }
   if (adapter === "pixmax") return pixmaxCatalog();
+  if (adapter === "pixverse") return pixverseCatalog(pf);
   // ImagineArt lists its models inside the generate tools' descriptions; it publishes no prices, so estimates are used
   const out: CatalogEntry[] = [];
   const lengths = durationTable(pf.tools.find((t) => t.name === "generate_video")?.description || "");
@@ -325,6 +328,7 @@ export async function renderOn(pf: Platform, req: RenderRequest, onLine: Line = 
   // the platform's own spelling of the nearest resolution it offers; none listed -> let the platform use its default
   req = { ...req, resolution: pickRes(req.resolution, nat.resolutions) };
   if (adapter === "flick") return flick(pf, nat.id, req, onLine);
+  if (adapter === "pixverse") return pixverse(pf, nat.id, nat.mode || "", req, onLine);
   const url =
     adapter === "pixmax"
       ? await pixmax(pf, nat.id, req, onLine)
@@ -674,4 +678,152 @@ async function pixmax(pf: Platform, model: string, req: RenderRequest, onLine: L
   if (urls.length) return urls[urls.length - 1];
   const msg = (text.match(/providerErrorMsgEh\\*"\s*:\s*\\*"([^"\\]+)/) || text.match(/"(?:errMessage|error|message)"\s*:\s*"([^"\\]+)"/))?.[1];
   throw new Error(fail ? `Pixmax ${fail[1].toLowerCase()}${msg ? `: ${msg}` : ""}` : `Pixmax returned no file${msg ? `: ${msg}` : ""}`);
+}
+
+/* --- PixVerse: remote MCP (OAuth via the bridge); async tasks polled with generation_status --- */
+// PixVerse publishes no prices through its server. Estimates (credits per image, or per ~5 s of 720p video) come from
+// PixVerse's published API price table where it lists the model, otherwise a rough family estimate. The real charge
+// is read from the account balance before and after each render and reported in the render log.
+const PV_EST: [RegExp, number][] = [
+  [/^v6$/, 45], [/^pixverse-c1$/, 50], [/^v5\.6$/, 45],
+  [/4k/, 150], [/^veo-3\.1-standard/, 200], [/^veo-3\.1-fast/, 100], [/^veo-3\.1-lite/, 60], [/^sora-2-pro/, 200], [/^sora-2/, 80],
+  [/^seedance-2\.5/, 100], [/^seedance-2\.0-standard/, 80], [/^seedance-2\.0-fast/, 50], [/^seedance-2\.0-mini/, 40],
+  [/^kling.*pro/, 90], [/^kling/, 60], [/^wan-3/, 60], [/^minimax-h3-max/, 80], [/^minimax/, 60], [/^flux-3/, 60],
+  [/^grok/, 40], [/^gemini-omni/, 50], [/^happyhorse/, 50],
+  [/^gpt-image/, 20], [/nano-banana|gemini-3/, 15], [/^seedream/, 10], [/^kling-image/, 10], [/^qwen/, 8], [/^gemini/, 10],
+];
+const pvEstimate = (id: string, kind: ModelKind) => PV_EST.find(([re]) => re.test(id))?.[1] ?? (kind === "image" ? 10 : 60);
+const PV_NAMES: Record<string, string> = { v6: "PixVerse V6", "v5.6": "PixVerse V5.6", "pixverse-c1": "PixVerse C1" };
+const pvName = (id: string) =>
+  PV_NAMES[id] ||
+  id
+    .split("-")
+    .map((w) => (/^\d/.test(w) ? w.toUpperCase().replace(/^(\d+)K$/, "$1K") : w[0].toUpperCase() + w.slice(1)))
+    .join(" ")
+    .replace(/^Gpt /, "GPT ")
+    .replace(/^Minimax /, "MiniMax ")
+    .replace(/ (\d)K$/, " $1K");
+
+type PvParam = { supported?: boolean | null; enum?: unknown[] | null; max_count?: number };
+type PvCaps = { models?: Record<string, { parameters?: Record<string, PvParam> }>; default_model?: string };
+
+/** tools/call on PixVerse, returning its structured reply (or the JSON inside its text) */
+async function pvCall<T = Record<string, unknown>>(pf: Platform, name: string, args: Record<string, unknown>): Promise<T & { _text: string }> {
+  const r = (await mcpRpc(pf, "tools/call", { name, arguments: args })) as { isError?: boolean; structuredContent?: unknown } | null;
+  const text = textOf(r);
+  if (r?.isError) throw new Error(`PixVerse: ${text.slice(0, 300) || `${name} failed`}`);
+  const sc = (r?.structuredContent as T) || parse<T>(text.split("Result JSON:").pop() || text) || ({} as T);
+  return { ...sc, _text: text };
+}
+
+async function pixverseCatalog(pf: Platform): Promise<CatalogEntry[]> {
+  const [video, image, ref] = await Promise.all(["video", "image", "reference"].map((mode) => pvCall<PvCaps>(pf, "capabilities", { mode })));
+  const list = (p: PvParam | undefined) => (p && p.supported !== false && Array.isArray(p.enum) ? p.enum : []);
+  const out: CatalogEntry[] = [];
+  for (const [id, m] of Object.entries(image.models || {})) {
+    const p = m.parameters || {};
+    out.push({ native: id, name: pvName(id), kind: "image", credits: pvEstimate(id, "image"), mode: `img:${p.images?.max_count || 0}`, resolutions: list(p.quality).map(String) });
+  }
+  for (const [id, m] of Object.entries(video.models || {})) {
+    const p = m.parameters || {};
+    const r = ref.models?.[id]?.parameters;
+    // mode carries what references the model takes: "ref:<images>:<videos>" when it has a reference mode
+    const mode = (r ? `ref:${r.images?.max_count || 0}:${r.videos?.max_count || 0}` : `frame:${p.images?.max_count || 0}`) + (id === "grok-imagine-1.5" ? ":needs-image" : "");
+    out.push({ native: id, name: pvName(id), kind: "video", credits: pvEstimate(id, "video"), mode, durations: list(p.duration).map(Number).filter((d) => d > 0), resolutions: list(p.quality).map(String) });
+  }
+  return out;
+}
+
+async function pvBalance(pf: Platform): Promise<number | null> {
+  try {
+    const a = await pvCall<{ credits?: { total?: number } }>(pf, "account", {});
+    return typeof a.credits?.total === "number" ? a.credits.total : null;
+  } catch {
+    return null;
+  }
+}
+
+/** PixVerse takes its own renders, or files at a public https address (imported first); never local uploads. */
+async function pvReference(pf: Platform, m: MediaInput, onLine: Line): Promise<{ type: string; id: string } | null> {
+  const nat = m.native?.platformId === pf.id ? m.native.id : "";
+  if (nat) {
+    const [type, id] = nat.includes(":") ? nat.split(":") : [isVideoUrl(m.url || "") ? "video" : "image", nat];
+    return { type, id };
+  }
+  if (!m.url || !/^https:/.test(m.url)) return null;
+  const media_type = isVideoUrl(m.url) ? "video" : "image";
+  onLine(`PixVerse: importing a ${media_type} reference…`);
+  const imp = await pvCall<{ operation_id?: string }>(pf, "import_url", { url: m.url, media_type, client_request_id: uid() });
+  const op = imp.operation_id || imp._text.match(/operation_id\D{0,6}([\w-]+)/)?.[1];
+  if (!op) throw new Error(`PixVerse didn't accept the reference: ${imp._text.slice(0, 160)}`);
+  for (let i = 0; i < 40; i++) {
+    const s = await pvCall<{ status?: string; asset_id?: string | number; error?: unknown }>(pf, "import_status", { operation_id: op });
+    if (s.asset_id) return { type: "upload", id: String(s.asset_id) };
+    if (/fail|error/i.test(String(s.status || ""))) throw new Error(`PixVerse couldn't import the reference: ${s._text.slice(0, 160)}`);
+    await sleep(3000);
+  }
+  throw new Error("PixVerse took too long to import the reference");
+}
+
+async function pixverse(pf: Platform, model: string, mode: string, req: RenderRequest, onLine: Line): Promise<RenderResult> {
+  const kind = req.kind === "image" ? "image" : "video";
+  const media = (req.media || []).filter((m) => m.url || m.native);
+  const refs: { type: string; id: string; role: string; video: boolean }[] = [];
+  let skipped = 0;
+  for (const m of media) {
+    const r = await pvReference(pf, m, onLine);
+    if (r) refs.push({ ...r, role: m.role, video: r.type === "video" || isVideoUrl(m.url || "") });
+    else skipped++;
+  }
+  if (skipped)
+    onLine(`PixVerse only takes references that are PixVerse renders or files at a public https link: ${skipped} reference${skipped === 1 ? " was" : "s were"} left out. Render the reference on PixVerse first, or use another platform for uploaded files.`);
+  if (/needs-image/.test(mode) && !refs.length) throw new Error(`${pvName(model)} on PixVerse needs a first-frame image`);
+
+  const args: Record<string, unknown> = { prompt: req.prompt, model, client_request_id: uid() };
+  if (req.aspect) args.aspect_ratio = req.aspect;
+  if (req.resolution) args.quality = req.resolution;
+  if (kind === "image") {
+    const max = Number(mode.split(":")[1] || 0);
+    const imgs = refs.filter((r) => !r.video).slice(0, max);
+    if (imgs.length) args.images = imgs.map(({ type, id }) => ({ type, id }));
+  } else {
+    args.duration = Math.round(req.duration || 5);
+    const [, maxImg, maxVid] = mode.split(":").map(Number);
+    const extra = refs.filter((r) => r.role === "ref");
+    if (extra.length && mode.startsWith("ref:")) {
+      // several references: PixVerse's reference mode keeps each one separate
+      args.mode = "reference";
+      const imgs = refs.filter((r) => !r.video).slice(0, maxImg);
+      const vids = refs.filter((r) => r.video).slice(0, maxVid || 0);
+      if (imgs.length) args.images = imgs.map(({ type, id }) => ({ type, id }));
+      if (vids.length) args.videos = vids.map(({ type, id }) => ({ type, id }));
+      if (refs.length > imgs.length + vids.length) onLine(`${pvName(model)} takes up to ${maxImg} images and ${maxVid || 0} videos as references: the rest were left out.`);
+    } else {
+      const first = refs.find((r) => !r.video);
+      if (first) args.images = [{ type: first.type, id: first.id }];
+      if (extra.length) onLine(`${pvName(model)} on PixVerse animates one first frame; pick a model with reference mode (Seedance, Kling O3, Wan 3.0, V6…) to use several references.`);
+    }
+  }
+
+  const before = await pvBalance(pf);
+  onLine(`PixVerse: ${pvName(model)}…`);
+  const sub = await pvCall<Record<string, unknown>>(pf, kind === "image" ? "create_image" : "create_video", args);
+  const ids = (sub[`${kind}_ids`] as unknown[]) || (sub.ids as unknown[]) || [];
+  const id = String(ids[0] ?? sub[`${kind}_id`] ?? sub.id ?? sub._text.match(new RegExp(`${kind}_ids?\\D{0,8}(\\d{6,})`))?.[1] ?? "");
+  if (!/^\d+$/.test(id)) throw new Error(`PixVerse didn't start the ${kind}: ${sub._text.slice(0, 200)}`);
+  // generation keeps going if the page closes; the id lets it be recovered
+  onLine(`PixVerse task ${id} submitted; waiting for the result…`);
+  for (let i = 0; i < 70; i++) {
+    const s = await pvCall<Record<string, unknown>>(pf, "generation_status", { type: kind, id, wait_seconds: 20 });
+    const status = String(s.status ?? s.state ?? "").toLowerCase();
+    const url = [s.url, s.media_url, s.result_url, (s.result as { url?: string } | undefined)?.url].find((u) => typeof u === "string" && /^https:/.test(u)) as string | undefined;
+    if (/fail|moderat|reject|cancel/.test(status)) throw new Error(`PixVerse ${kind} ${status}: ${s._text.slice(0, 200)}`);
+    if (url && (!status || /complet|success|done|finish|^1$/.test(status))) {
+      const after = await pvBalance(pf);
+      if (before !== null && after !== null) onLine(`PixVerse charged ${before - after} credits (balance ${after}).`);
+      return { url, nativeId: `${kind}:${id}` };
+    }
+    if (!status && !url && i > 2 && /error/i.test(s._text)) throw new Error(`PixVerse: ${s._text.slice(0, 200)}`);
+  }
+  throw new Error(`PixVerse is still rendering task ${id}: it will appear in your PixVerse library.`);
 }

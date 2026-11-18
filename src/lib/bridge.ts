@@ -74,7 +74,8 @@ export function isBalanceTool(name: string): boolean {
   const n = name.toLowerCase();
   const ACTIONS = new Set("create edit render run delete remove upload publish animate enhance upscale update select open narrate assemble download continue trash retry cancel buy purchase topup top charge spend submit send".split(" "));
   if (n.split(/[^a-z0-9]+/).some((w) => ACTIONS.has(w) || w.startsWith("generat"))) return false;
-  return /(^|[_-])(get[_-])?(balance|credits?|wallet|quota)([_-]|$)|account[_-]?(get|info)|credit[_-]check|check[_-]balance/.test(n);
+  // "account" alone: PixVerse's read-only account tool (name, membership, credits)
+  return /(^|[_-])(get[_-])?(balance|credits?|wallet|quota)([_-]|$)|account[_-]?(get|info)|^account$|credit[_-]check|check[_-]balance/.test(n);
 }
 
 export function classifyTool(name: string, description = ""): McpTool["role"] {
@@ -253,7 +254,9 @@ export async function syncBalance(pf: Platform): Promise<number | null> {
       const tool = pf.tools.find((t) => isBalanceTool(t.name))?.name || (pf.balancePath && isBalanceTool(pf.balancePath) ? pf.balancePath : "");
       if (!tool) return null;
       const r = await mcpRpc(pf, "tools/call", { name: tool, arguments: {} });
-      const n = firstNumber(textOf(r) || JSON.stringify(r));
+      // a structured total wins (PixVerse: credits.total, where the text also lists daily/monthly parts)
+      const total = (r as { structuredContent?: { credits?: { total?: unknown } } } | null)?.structuredContent?.credits?.total;
+      const n = typeof total === "number" ? total : firstNumber(textOf(r) || JSON.stringify(r));
       if (n !== null) addLedger(pf.id, 0, "Live balance sync", "live", n);
       return n;
     }
