@@ -240,7 +240,7 @@ export async function syncCatalog(pf: Platform): Promise<number> {
     // a model's lengths are everything any of its platforms accepts; each platform still gets one it allows
     if (e.kind === "video" && e.durations?.length) {
       const all = uniq([...(m.durations || []), ...e.durations]);
-      m = { ...m, durations: all, maxDuration: Math.max(m.maxDuration || 0, ...all) };
+      m = { ...m, durations: all, maxDuration: Math.max(...all) };
       models[models.findIndex((x) => x.id === m!.id)] = m;
     }
     if (e.resolutions?.length) {
