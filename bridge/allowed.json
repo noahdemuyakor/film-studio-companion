@@ -1,0 +1,4 @@
+{
+  "commands": ["pixmax-cli", "gcloud", "openart-cli", "higgsfield-cli", "npx", "node", "uvx"],
+  "outputDir": "./bridge-output"
+}

@@ -1,0 +1,122 @@
+import type { BridgeMode, Platform } from "./types";
+
+function p(x: Partial<Platform> & Pick<Platform, "id" | "name" | "mode">): Platform {
+  return {
+    enabled: true,
+    url: "",
+    mcpConfig: "",
+    command: "",
+    argTemplate: "",
+    submitPath: "",
+    pollPath: "",
+    assetPath: "",
+    balancePath: "",
+    balance: 0,
+    balanceSource: "manual",
+    allotment: 0,
+    period: "monthly",
+    threshold: 20,
+    models: {},
+    features: [],
+    tools: [],
+    status: "disconnected",
+    sample: true,
+    ...x,
+  };
+}
+
+/**
+ * Starting points for the platforms you may already pay for. URLs, commands and credit costs are
+ * placeholders: paste the real server URL / CLI name and your plan's numbers (marked "sample" until edited).
+ */
+export const PRESET_PLATFORMS: Platform[] = [
+  p({
+    id: "pf_higgsfield",
+    name: "Higgsfield",
+    mode: "mcp-remote",
+    url: "",
+    balancePath: "check_balance",
+    balance: 400,
+    allotment: 400,
+    models: { "seedance-2-5": 40, "kling-3-0": 35, "kling-4-0": 45, "veo-3-1": 60, "wan-2-7": 18, "minimax-h3": 30, "nano-banana-pro": 2, "nano-banana-2-1": 1 },
+    features: ["DoP camera presets", "Soul character styles", "Cinema Studio optics"],
+  }),
+  p({
+    id: "pf_openart",
+    name: "OpenArt",
+    mode: "mcp-remote",
+    url: "",
+    balancePath: "credit_check",
+    balance: 900,
+    allotment: 900,
+    models: { "seedance-2-5": 38, "kling-3-0": 32, "flux-1-pro": 3, "flux-1-dev": 1, "nano-banana-2-1": 1, "nano-banana-pro": 2, sdxl: 1 },
+    features: ["Persistent character library", "Reference plates"],
+  }),
+  p({
+    id: "pf_imagineart",
+    name: "ImagineArt",
+    mode: "mcp-remote",
+    url: "",
+    balancePath: "balance_inquiry",
+    balance: 250,
+    allotment: 250,
+    models: { "kling-3-0": 30, "veo-3-1": 58, "nano-banana-pro": 2, ideogram: 3, "flux-1-pro": 3 },
+    features: ["Poster & typography styles"],
+  }),
+  p({
+    id: "pf_pixmax",
+    name: "Pixmax",
+    mode: "cli",
+    command: "pixmax-cli",
+    argTemplate: "generate --model {model} --prompt {prompt} --ar {aspect_ratio} --duration {duration} --seed {seed} --out {out}",
+    balance: 600,
+    allotment: 600,
+    models: { "seedance-2-5": 36, "kling-4-0": 42, "wan-2-7": 15, "minimax-h3": 28 },
+    features: ["Specialised motion rendering", "Hero renders"],
+  }),
+  p({
+    id: "pf_pixverse",
+    name: "PixVerse",
+    mode: "api",
+    url: "",
+    submitPath: "/v1/jobs",
+    pollPath: "/v1/jobs/{id}",
+    assetPath: "result.video_url",
+    balance: 300,
+    allotment: 300,
+    models: { "kling-3-0": 30, "wan-2-7": 14, "seedance-2-5": 39 },
+    features: ["Motion effects", "Fast social cuts"],
+  }),
+  p({
+    id: "pf_flick",
+    name: "Flick.art",
+    mode: "api",
+    url: "",
+    submitPath: "/api/generate",
+    pollPath: "/api/jobs/{id}",
+    assetPath: "output.url",
+    balance: 200,
+    allotment: 200,
+    models: { "seedance-2-5": 42, "veo-3-1": 62, "nano-banana-pro": 2, "flux-1-pro": 3 },
+    features: ["Canvas boards", "Multi-model comparison"],
+  }),
+  p({
+    id: "pf_flow",
+    name: "Google Flow",
+    mode: "cli",
+    command: "gcloud",
+    argTemplate: "flow clips create --model={model} --prompt={prompt} --aspect-ratio={aspect_ratio} --duration={duration} --output={out}",
+    balance: 100,
+    allotment: 100,
+    period: "daily",
+    models: { "veo-3-1": 50, "omni-flash": 6, "nano-banana-2-1": 1, "nano-banana-pro": 2 },
+    features: ["Multi-clip agent instruction chains", "Daily trial credits"],
+  }),
+];
+
+export const MODE_LABEL: Record<BridgeMode, string> = {
+  "mcp-remote": "Remote MCP (HTTP/SSE, OAuth)",
+  "mcp-stdio": "Local MCP (stdio via bridge)",
+  cli: "Local CLI (via bridge)",
+  api: "API / webhook (submit → poll → fetch)",
+};

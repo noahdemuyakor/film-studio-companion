@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-grotesk), ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #1b2024;
+  --color-ink-2: #20262a;
+  --color-panel: #2a3136;
+  --color-panel-2: #323a40;
+  --color-card: #262d32;
+  --color-pop: #2a3136;
+  --color-lime: #8db600;
+  --color-pink: #ff005b;
+  --color-mute: #898a8b;
+  --color-soft: #f7f7f8;
+  --color-dark: #232a2f;
+  --color-dark-2: #1a1a1a;
+  --color-w5: #ffffff0d;
+  --color-w10: #ffffff1a;
+  --color-w30: #ffffff4d;
+  --color-w40: #ffffff66;
+  --color-w50: #ffffff80;
+  --color-w60: #ffffff99;
+
+  --text-10: 10px;
+  --text-12: 12px;
+  --text-14: 14px;
+  --text-16: 16px;
+  --text-18: 18px;
+  --text-20: 20px;
+  --text-24: 24px;
+  --text-28: 28px;
+  --text-36: 36px;
+  --text-40: 40px;
+  --text-48: 48px;
+  --text-64: 64px;
+
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-10: 10px;
+  --radius-12: 12px;
+  --radius-16: 16px;
+  --radius-24: 24px;
+  --radius-30: 30px;
+
+  --container-col: 1280px;
+  --container-hero: 672px;
+  --container-steps: 1312px;
+  --container-faq: 884px;
+  --container-intro: 602px;
+  --container-wide: 1920px;
+  --container-app: 1408px;
+  --container-doc: 880px;
+
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+}
+
+html,
+body {
+  background: #1b2024;
+  color: #ffffff;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.035em;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.thin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #ffffff1a;
+  border-radius: 9999px;
+}
+
+.nav-fade {
+  mask-image: linear-gradient(to right, #000 calc(100% - 64px), transparent);
+}
+
+.btn-white {
+  background: #ffffff;
+  color: #232a2f;
+  box-shadow: rgba(0, 0, 0, 0.12) 0 4px 16px 0, rgba(0, 0, 0, 0.2) -1px -2px 6px 0 inset;
+}
+
+.btn-lime {
+  background: linear-gradient(180deg, #a6d11c 0%, #8db600 60%, #739400 100%);
+  color: #232a2f;
+  box-shadow: rgba(141, 182, 0, 0.25) 0 6px 24px 0, rgba(255, 255, 255, 0.4) 0 2px 2px 0 inset;
+}
+
+.glass {
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(16px);
+}
+
+/* React Flow dark tweaks */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__controls button {
+  background: #2a3136 !important;
+  border-color: #ffffff1a !important;
+  fill: #fff !important;
+  color: #fff !important;
+}
+.react-flow__minimap {
+  background: #20262a !important;
+}
+.react-flow__handle {
+  width: 10px !important;
+  height: 10px !important;
+  border: 2px solid #1b2024 !important;
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin-slow 0.9s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(90deg, #ffffff08 0%, #ffffff1a 50%, #ffffff08 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}

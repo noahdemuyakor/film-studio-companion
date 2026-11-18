@@ -1,0 +1,6 @@
+node_modules/
+.next/
+out/
+bridge/bridge-output/
+*.tsbuildinfo
+.env*
