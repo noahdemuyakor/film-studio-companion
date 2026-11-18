@@ -708,8 +708,19 @@ type PvParam = { supported?: boolean | null; enum?: unknown[] | null; max_count?
 type PvCaps = { models?: Record<string, { parameters?: Record<string, PvParam> }>; default_model?: string };
 
 /** tools/call on PixVerse, returning its structured reply (or the JSON inside its text) */
+// read-only tools may be retried after a dropped connection; create_* calls never are (that could pay twice)
+const PV_READ_ONLY = new Set(["account", "capabilities", "generation_status", "task_status", "import_status"]);
 async function pvCall<T = Record<string, unknown>>(pf: Platform, name: string, args: Record<string, unknown>): Promise<T & { _text: string }> {
-  const r = (await mcpRpc(pf, "tools/call", { name, arguments: args })) as { isError?: boolean; structuredContent?: unknown } | null;
+  let r = null as { isError?: boolean; structuredContent?: unknown } | null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      r = (await mcpRpc(pf, "tools/call", { name, arguments: args })) as typeof r;
+      break;
+    } catch (e) {
+      if (!PV_READ_ONLY.has(name) || attempt >= 4 || !/fetch failed|timed out|ECONN|network|socket|50\d/i.test(String(e))) throw e;
+      await sleep(3000 * (attempt + 1));
+    }
+  }
   const text = textOf(r);
   if (r?.isError) throw new Error(`PixVerse: ${text.slice(0, 300) || `${name} failed`}`);
   const sc = (r?.structuredContent as T) || parse<T>(text.split("Result JSON:").pop() || text) || ({} as T);
@@ -807,7 +818,14 @@ async function pixverse(pf: Platform, model: string, mode: string, req: RenderRe
 
   const before = await pvBalance(pf);
   onLine(`PixVerse: ${pvName(model)}…`);
-  const sub = await pvCall<Record<string, unknown>>(pf, kind === "image" ? "create_image" : "create_video", args);
+  let sub: Record<string, unknown> & { _text: string };
+  try {
+    sub = await pvCall<Record<string, unknown>>(pf, kind === "image" ? "create_image" : "create_video", args);
+  } catch (e) {
+    if (/fetch failed|timed out|ECONN|network|socket/i.test(String(e)))
+      throw new Error(`The connection to PixVerse dropped while submitting. Check your PixVerse library before trying again, so it isn't paid twice (${e instanceof Error ? e.message : e}).`);
+    throw e;
+  }
   const ids = (sub[`${kind}_ids`] as unknown[]) || (sub.ids as unknown[]) || [];
   const id = String(ids[0] ?? sub[`${kind}_id`] ?? sub.id ?? sub._text.match(new RegExp(`${kind}_ids?\\D{0,8}(\\d{6,})`))?.[1] ?? "");
   if (!/^\d+$/.test(id)) throw new Error(`PixVerse didn't start the ${kind}: ${sub._text.slice(0, 200)}`);

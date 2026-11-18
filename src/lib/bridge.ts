@@ -279,7 +279,8 @@ export function routeLocal(model: ModelDef, mode: RouteMode, lockId: string, pla
   const alternatives = platforms
     .filter((pf) => pf.enabled && pf.models[model.id] !== undefined)
     .map((pf) => {
-      const cost = Math.round(pf.models[model.id] * (model.kind === "video" ? Math.max(1, duration / 5) : 1));
+      // prices are per ~5 s of video; PixVerse bills by the second, others charge at least a 5 s clip
+      const cost = Math.max(1, Math.round(pf.models[model.id] * (model.kind === "video" ? (pf.adapter === "pixverse" ? duration / 5 : Math.max(1, duration / 5)) : 1)));
       const ok = pf.balance - cost >= pf.threshold;
       return { platformId: pf.id, cost, ok, why: ok ? `${pf.balance} credits available` : `only ${pf.balance} credits (reserve ${pf.threshold})` };
     })
