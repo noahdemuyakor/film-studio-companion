@@ -732,7 +732,9 @@ function Assistant({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   const selected = st.nodes.filter((n) => n.selected && n.type !== "section");
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [st.canvasChat.length, busy]);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [st.canvasChat.length, busy]);
   const send = async (msg = text) => {
     if (!msg.trim() || busy) return;
     setText("");
