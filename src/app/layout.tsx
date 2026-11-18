@@ -19,6 +19,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${grotesk.variable}`}>
       <body>
+        {/* After a redeploy, a cached page can ask for script files that no longer exist: reload once to get the new build. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){function f(m){if(!/ChunkLoadError|Loading chunk|Failed to load chunk|Failed to fetch dynamically imported module/i.test(m||''))return;try{var k='fsc-chunk-reload',t=+sessionStorage.getItem(k)||0;if(Date.now()-t<30000)return;sessionStorage.setItem(k,String(Date.now()))}catch(e){}location.reload()}addEventListener('error',function(e){f((e.error&&(e.error.name+' '+e.error.message))||e.message)});addEventListener('unhandledrejection',function(e){var r=e.reason;f(r&&(r.name+' '+r.message))})})();`,
+          }}
+        />
         <Hydrate />
         <CookieBanner />
         {children}

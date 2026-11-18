@@ -126,6 +126,8 @@ export function continuityLocal(cast: CastMember[], refs: VaultRef[], settings: 
 }
 
 export async function continuity(cast: CastMember[], refs: VaultRef[], settings: CinemaSettings, prev?: Shot): Promise<Result<string>> {
+  // Nothing to keep consistent (no cast, references or previous shot): the rule-based line is enough, and it saves a Claude round trip.
+  if (!cast.length && !refs.length && !prev) return { value: continuityLocal(cast, refs, settings, prev), mode: "local" };
   return run(
     "Continuity Guardian",
     async () => {
@@ -230,7 +232,7 @@ export async function compilePrompt(prompt: string, s: CinemaSettings, model: Mo
     `Prompt Compiler → ${model.name}`,
     async () => {
       const text = await callClaude(
-        `You are the Optical Prompt Compiler of an AI film studio. Translate the director's UI state into ONE hyper-optimised prompt for the target model "${model.name}" (${model.vendor}). Required syntax: ${STYLE_GUIDE[model.promptStyle]}. Respect the model's capabilities: ${model.capabilities.join(", ")}. The "idea" is the subject of the shot and must stay its subject: never replace or drop what it describes. Use the "continuity" descriptors only for characters, props or places the idea names or clearly calls for (a person, someone, she/he…); if the idea doesn't feature a character, leave the cast out and keep only the lighting/style continuity. Keep it under 120 words. Output only the prompt.`,
+        `You are the Optical Prompt Compiler of an AI film studio. Translate the director's UI state into ONE hyper-optimised prompt for the target model "${model.name}" (${model.vendor}). Required syntax: ${STYLE_GUIDE[model.promptStyle]}. Respect the model's capabilities: ${model.capabilities.join(", ")}. The "idea" is the subject of the shot and must stay its subject: never replace or drop what it describes. Use the "continuity" descriptors only for characters, props or places the idea names or clearly calls for (a person, someone, she/he…); if the idea doesn't feature a character, leave the cast out and keep only the lighting/style continuity.${model.kind === "image" ? " This is a still image: describe one frozen frame, with no camera movement, pacing, motion or sound." : ""} Keep it under 120 words. Output only the prompt.`,
         JSON.stringify({ idea: prompt, camera: s, continuity: cont, tempo: tempoLabel(s.tempo) }),
         600,
       );
@@ -317,7 +319,7 @@ export async function breakdownScript(script: string, cast: CastMember[]): Promi
     async () => {
       const text = await callClaude(
         `You are the AI Showrunner of a short-drama studio. Break the script or story idea into a JSON object:
-{"title":string,"logline":string,"scenes":[{"title":string,"location":string,"beat":string,"emotion":string,"intensity":0-10,"summary":string,"dialogue":[{"character":string,"line":string}],"shots":[{"description":string,"shotType":string,"movement":string,"duration":number,"characters":[string]}]}]}
+{"title":string,"logline":string,"scenes":[{"title":string,"location":string,"beat":string,"emotion":"Dread"|"Confrontation"|"Resolve"|"Longing"|"Joy"|"Curiosity"|"Neutral","intensity":0-10,"summary":string,"dialogue":[{"character":string,"line":string}],"shots":[{"description":string,"shotType":string,"movement":string,"duration":number,"characters":[string]}]}]}
 Use vertical-drama pacing (hooks, reversals, cliffhanger). Durations in seconds (2-10). Known cast: ${cast.map((c) => c.name).join(", ") || "none"}. Reply with JSON only.`,
         script,
         4000,

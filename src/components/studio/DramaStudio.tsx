@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { modelById, useStudio } from "@/lib/store";
 import { breakdownScript } from "@/lib/engine";
+import { readScriptFile, SCRIPT_ACCEPT } from "@/lib/scriptImport";
 import { planRoute, type PreflightLine } from "@/lib/bridge";
 import { produceShot } from "@/lib/router";
 import type { CastMember, Episode, RoutePlan, Shot } from "@/lib/types";
@@ -16,6 +17,16 @@ import { RouteSelector } from "./shared";
 import { useHydrated } from "../Hydrate";
 
 const EMO_COLOR: Record<string, string> = { Dread: "#b28dff", Confrontation: "#ff5c9a", Resolve: "#8db600", Longing: "#7cc4ff", Joy: "#ffd25c", Curiosity: "#ffb347", Neutral: "#888" };
+/** Colour for any emotion label, including free text such as "Suspense and guilt": nearest of the fixed emotions by keyword. */
+const EMO_WORDS: [string, RegExp][] = [
+  ["Dread", /dread|fear|terror|suspense|tense|tension|anxi|guilt|unease|menace|horror/i],
+  ["Confrontation", /confront|anger|angry|rage|conflict|betray|fight|accus|hostil/i],
+  ["Resolve", /resolve|determin|courage|defian|hope|resolution|triumph/i],
+  ["Longing", /long|grief|sad|sorrow|melanchol|nostalg|regret|lonel|loss|wistful/i],
+  ["Joy", /joy|happy|love|warm|relief|delight|romance|tender/i],
+  ["Curiosity", /curio|myster|intrigu|wonder|discover|search/i],
+];
+const emoColor = (e: string) => EMO_COLOR[e] || EMO_COLOR[EMO_WORDS.find(([, r]) => r.test(e))?.[0] || "Neutral"];
 
 function CastEditor({ c }: { c: CastMember }) {
   const update = useStudio((s) => s.update);
@@ -117,7 +128,29 @@ export default function DramaStudio() {
   const model = modelById(st.models, st.modelId);
   const cSel = st.cast.find((c) => c.id === castSel) || st.cast[0];
 
+  const scriptFile = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState("");
+  const importScript = async (f: File) => {
+    setImporting(true);
+    setImportMsg("");
+    try {
+      const text = await readScriptFile(f);
+      const base = f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+      // a fresh script replaces the old breakdown, which no longer matches it
+      patchEp({ script: text, scenes: [], logline: "", ...(/^Episode \d+$/.test(ep.title) || !ep.title.trim() ? { title: base } : {}) });
+      setImportMsg(`Loaded ${f.name} (${text.split(/\s+/).length.toLocaleString()} words). Now break it down with Claude.`);
+    } catch (e) {
+      setImportMsg(e instanceof Error ? e.message : String(e));
+    }
+    setImporting(false);
+  };
+
   const breakdown = async () => {
+    if (!ep.script.trim()) {
+      setImportMsg("Paste a script or story idea, or upload a script file, first.");
+      return;
+    }
     setBusy(true);
     const r = await breakdownScript(ep.script, st.cast);
     patchEp({ ...r.value, title: ep.title, engine: r.mode });
@@ -176,10 +209,14 @@ export default function DramaStudio() {
   const renderAll = async () => {
     const shots = ep.scenes.flatMap((sc) => sc.shots.map((sp) => ({ title: `${sc.title.split(":")[0]} · ${sp.shotType}`, prompt: `${sp.description}. Emotion: ${sc.emotion}.`, chars: sp.characters })));
     setBatchMsg("Claude is planning credit routes…");
+    // Every shot here uses the same model, routing mode and duration, so one route plan covers them all (was one Claude call per shot).
+    const mode = st.routeMode === "lock" ? "lock" : "cheapest";
+    const plans = new Map<string, RoutePlan>();
     const lines = [];
     for (const s of shots) {
-      const plan: RoutePlan = await planRoute(model, st.routeMode === "lock" ? "lock" : "cheapest", st.lockPlatform, st.settings.duration);
-      lines.push({ label: s.title, model, plan, shot: s });
+      const key = `${model.id}|${mode}|${st.lockPlatform}|${st.settings.duration}`;
+      if (!plans.has(key)) plans.set(key, await planRoute(model, mode, st.lockPlatform, st.settings.duration));
+      lines.push({ label: s.title, model, plan: plans.get(key)!, shot: s });
     }
     setBatchMsg("");
     setPending({ lines });
@@ -272,6 +309,32 @@ export default function DramaStudio() {
               <Brain size={14} /> {busy ? "Showrunner is working…" : "Break down with Claude"}
             </button>
           </div>
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const f = e.dataTransfer.files?.[0];
+              if (f) importScript(f);
+            }}
+            className="flex flex-wrap items-center gap-2 rounded-12 border border-dashed border-w10 px-3 py-2 text-12 text-w60"
+          >
+            <button onClick={() => scriptFile.current?.click()} disabled={importing} className="h-8 px-3 rounded-8 bg-w10 text-white font-semibold disabled:opacity-60">
+              {importing ? "Reading script…" : "Upload your script"}
+            </button>
+            <span>PDF, DOCX, FDX, TXT or MD · up to 10 MB · or drop the file here</span>
+            {importMsg && <span className={importMsg.startsWith("Loaded") ? "text-lime" : "text-[#ff5c9a]"}>{importMsg}</span>}
+            <input
+              ref={scriptFile}
+              type="file"
+              accept={SCRIPT_ACCEPT}
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) importScript(f);
+              }}
+            />
+          </div>
           <TextArea aria-label="Script or story idea" value={ep.script} onChange={(e) => patchEp({ script: e.target.value })} placeholder="Paste a screenplay (INT./EXT. headings, NAME: dialogue) or just describe a story idea in a few sentences." className="font-mono text-12 leading-5 h-[220px]" />
           {ep.scenes.length > 0 && (
             <>
@@ -294,7 +357,7 @@ export default function DramaStudio() {
                 <div className="flex items-end gap-1 h-[90px] rounded-12 bg-w5 p-2">
                   {ep.scenes.map((sc) => (
                     <div key={sc.id} className="flex-1 flex flex-col items-center justify-end gap-1 h-full" title={`${sc.title}: ${sc.emotion} ${sc.intensity}/10`}>
-                      <div className="w-full rounded-6" style={{ height: `${sc.intensity * 10}%`, background: EMO_COLOR[sc.emotion] || "#888" }} />
+                      <div className="w-full rounded-6" style={{ height: `${Math.max(8, Math.min(10, Number(sc.intensity) || 0) * 10)}%`, background: emoColor(sc.emotion) }} />
                       <span className="text-[9px] text-w50 truncate max-w-full">{sc.emotion}</span>
                     </div>
                   ))}
@@ -306,7 +369,7 @@ export default function DramaStudio() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-14 font-semibold">{sc.title}</h3>
                       <Badge>{sc.beat}</Badge>
-                      <span className="text-[10px] font-semibold rounded-6 px-1.5 py-0.5 text-dark" style={{ background: EMO_COLOR[sc.emotion] || "#888" }}>
+                      <span className="text-[10px] font-semibold rounded-6 px-1.5 py-0.5 text-dark" style={{ background: emoColor(sc.emotion) }}>
                         {sc.emotion} · {sc.intensity}/10
                       </span>
                     </div>
