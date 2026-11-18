@@ -46,9 +46,12 @@ export default function ImageStudio() {
       createdAt: Date.now(),
     }));
     st.update("images", (v) => [...temps, ...v]);
+    // A locked character joins the image only when the prompt names them or asks for a person; otherwise the prompt's own subject stands alone.
+    const wantsPerson = /\b(person|people|man|men|woman|women|girl|boy|child|someone|somebody|character|portrait|face|she|he|her|him|they|actor|actress|model|couple|crowd)\b/i.test(text);
+    const cast = st.cast.filter((c) => st.castIds.includes(c.id) && (wantsPerson || new RegExp(`\\b${c.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text)));
     await Promise.all(
       temps.map(async (t) => {
-        const shot = await produceShot({ title: t.title, prompt: `${text}${quality === "High" ? ", highly detailed" : ""}`, model, settings, cast: st.cast.filter((c) => st.castIds.includes(c.id)), refs: st.vault.filter((r) => st.refIds.includes(r.id)) });
+        const shot = await produceShot({ title: t.title, prompt: `${text}${quality === "High" ? ", highly detailed" : ""}`, model, settings, cast, refs: st.vault.filter((r) => st.refIds.includes(r.id)) });
         useStudio.getState().update("images", (v) => v.map((x) => (x.id === t.id ? { ...shot, title: t.title } : x)));
       }),
     );
