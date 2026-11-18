@@ -340,6 +340,9 @@ function rpc(s, method, params) {
 }
 
 /* ----------------------------- server ----------------------------- */
+// one bad request must never take the whole bridge down: log it and keep serving
+process.on("unhandledRejection", (e) => console.error("[bridge] request failed:", e instanceof Error ? e.message : e));
+process.on("uncaughtException", (e) => console.error("[bridge] error:", e instanceof Error ? e.message : e));
 http
   .createServer(async (req, res) => {
     if (req.method === "OPTIONS") return send(res, 204, "");
@@ -350,7 +353,7 @@ http
       if (req.method === "POST" && req.url === "/claude") return runClaude(res, await readBody(req));
       if (req.method === "POST" && req.url === "/media/import") return importMedia(res, await readBody(req));
       if (req.method === "POST" && req.url === "/pixmax") return runPixmax(res, await readBody(req));
-      if (req.method === "POST" && ["/media/save", "/media/bytes", "/media/put"].includes(req.url)) return refRoute(res, req.url, await readBody(req));
+      if (req.method === "POST" && ["/media/save", "/media/bytes", "/media/put"].includes(req.url)) return await refRoute(res, req.url, await readBody(req));
       const m = req.url.match(/^\/mcp\/([^/]+)\/rpc$/);
       if (req.method === "POST" && m) {
         const body = await readBody(req);
