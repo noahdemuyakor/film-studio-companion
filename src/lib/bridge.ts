@@ -355,11 +355,12 @@ export async function planRoute(model: ModelDef, mode: RouteMode, lockId: string
 }
 
 /** Run a render through a platform. Returns the asset URL or marks the result as a preview. */
-export async function executeOnPlatform(pf: Platform, model: ModelDef, controls: Record<string, unknown>, payload: unknown, cost: number, onLine?: (l: string) => void): Promise<{ url?: string; simulated: boolean; nativeId?: string }> {
+export async function executeOnPlatform(pf: Platform, model: ModelDef, controls: Record<string, unknown>, payload: unknown, cost: number, onLine?: (l: string) => void): Promise<{ url?: string; simulated: boolean; nativeId?: string; charged?: number }> {
   const st = useStudio.getState();
   let url: string | undefined;
   let simulated = true;
   let nativeId: string | undefined;
+  let charged: number | undefined;
   if (st.liveRenders && pf.status === "connected") {
     if (pf.adapter || detectAdapter(pf)) {
       // a built-in adapter knows this platform's real inputs and how to fetch the finished file
@@ -371,6 +372,7 @@ export async function executeOnPlatform(pf: Platform, model: ModelDef, controls:
       );
       url = out.url;
       nativeId = out.nativeId;
+      charged = out.charged;
       simulated = false;
     } else if (pf.mode === "mcp-remote" || pf.mode === "mcp-stdio") {
       const tool = pf.tools.find((t) => t.role === "generate" && (model.kind === "image" ? /image|imagine/.test(t.name) : /video|clip|generate/.test(t.name))) || pf.tools.find((t) => t.role === "generate");
@@ -394,7 +396,7 @@ export async function executeOnPlatform(pf: Platform, model: ModelDef, controls:
   const live = !simulated ? await syncBalance(useStudio.getState().platforms.find((x) => x.id === pf.id)!) : null;
   // previews spend nothing, so they leave the wallet alone; real renders use the live balance, or deduct the estimate when there is none
   if (live === null && !simulated) addLedger(pf.id, -cost, `${model.name} render`, "estimate");
-  return { url, simulated, nativeId };
+  return { url, simulated, nativeId, charged };
 }
 
 /* ------------------------------ Pre-flight ------------------------------ */

@@ -137,7 +137,9 @@ export async function produceShot(input: ProduceInput, onStage?: (s: Shot["statu
     const media = all.filter((m, i) => all.findIndex((x) => x.url === m.url && x.native?.id === m.native?.id) === i);
     const controls = { prompt: compiled.value, aspect_ratio: settings.aspect, duration, seed, resolution: settings.resolution, media };
     const r = pf ? await executeOnPlatform(pf, model, controls, payload, plan.cost, input.onLine) : await dispatch(model, payload);
-    return { ...base, credits: plan.cost, platformId: plan.platformId, route: plan.reason, status: "done", resultUrl: r.url, simulated: r.simulated, nativeId: "nativeId" in r ? r.nativeId : undefined };
+    // the platform's real charge when it reports one, else the quote/estimate the route was planned with
+    const charged = "charged" in r && typeof r.charged === "number" ? r.charged : undefined;
+    return { ...base, credits: charged ?? plan.cost, platformId: plan.platformId, route: plan.reason, status: "done", resultUrl: r.url, simulated: r.simulated, nativeId: "nativeId" in r ? r.nativeId : undefined };
   } catch (e) {
     return { ...base, status: "error", error: e instanceof Error ? e.message : String(e) };
   }

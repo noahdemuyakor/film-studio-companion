@@ -335,6 +335,7 @@ const isVideoUrl = (u: string) => u.startsWith("data:video/") || /\.(mp4|webm|mo
 export interface RenderResult {
   url: string;
   nativeId?: string; // the platform's own id for the result (Flick job id)
+  charged?: number; // what the platform actually took, when it reports it
 }
 
 type Line = (l: string) => void;
@@ -870,8 +871,9 @@ async function pixverse(pf: Platform, model: string, mode: string, req: RenderRe
     if (/fail|moderat|reject|cancel/.test(status)) throw new Error(`PixVerse ${kind} ${status}: ${s._text.slice(0, 200)}`);
     if (url && (!status || /complet|success|done|finish|^1$/.test(status))) {
       const after = await pvBalance(pf);
-      if (before !== null && after !== null) onLine(`PixVerse charged ${before - after} credits (balance ${after}).`);
-      return { url, nativeId: `${kind}:${id}` };
+      const charged = before !== null && after !== null ? Math.max(0, before - after) : undefined;
+      if (charged !== undefined) onLine(`PixVerse charged ${charged} credits (balance ${after}).`);
+      return { url, nativeId: `${kind}:${id}`, charged };
     }
     if (!status && !url && i > 2 && /error/i.test(s._text)) throw new Error(`PixVerse: ${s._text.slice(0, 200)}`);
   }
