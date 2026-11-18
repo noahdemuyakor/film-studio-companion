@@ -4,6 +4,7 @@ import { useStudio } from "@/lib/store";
 import { CLAUDE_MODELS, testClaude } from "@/lib/engine";
 import { encryptSecret, maskSecret } from "@/lib/secure";
 import { addLedger, bridgeHealth, bridgeModule, claudePlatformWizard, mcpDiscover, syncBalance } from "@/lib/bridge";
+import { detectAdapter, flickCreateProject, flickProjects, syncCatalog } from "@/lib/adapters";
 import { MODE_LABEL } from "@/lib/platforms";
 import type { BridgeMode, Platform } from "@/lib/types";
 import { uid } from "@/lib/util";
@@ -84,6 +85,70 @@ function EngineCard() {
   );
 }
 
+/** What the platform's render adapter needs: Flick project, ImagineArt organization, Google Flow's open project. */
+function AdapterSetup({ p, patch }: { p: Platform; patch: (x: Partial<Platform>) => void }) {
+  const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const run = async (label: string, f: () => Promise<void>) => {
+    setBusy(label);
+    setErr("");
+    try {
+      await f();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+    setBusy("");
+  };
+  const count = Object.keys(p.nativeModels || {}).length;
+  const kinds = Object.values(p.nativeModels || {}).reduce((a, m) => ({ ...a, [m.kind]: (a[m.kind] || 0) + 1 }), {} as Record<string, number>);
+  return (
+    <div className="rounded-10 bg-w5 p-2.5 flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <Badge tone="lime">real renders</Badge>
+        <span className="text-w60 flex-1">
+          {count} models · {kinds.image || 0} image · {kinds.video || 0} video
+        </span>
+        <button disabled={!!busy} onClick={() => run("models", async () => void (await syncCatalog(p)))} className="h-6 px-2 rounded-6 bg-w10 font-semibold disabled:opacity-50">
+          {busy === "models" ? "Loading…" : "Refresh models"}
+        </button>
+      </div>
+      {p.adapter === "flick" && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-w50 shrink-0">Renders go to</span>
+          {projects ? (
+            <div className="h-7 flex-1 rounded-6 bg-w10 px-2 flex items-center">
+              <Select
+                label="Flick project"
+                value={p.adapterConfig?.projectId || ""}
+                onChange={(v) => {
+                  if (v === "__new")
+                    return run("new", async () => {
+                      const n = await flickCreateProject(p, "Film Studio Companion");
+                      setProjects([n, ...(projects || [])]);
+                      patch({ adapterConfig: { ...p.adapterConfig, projectId: n.id, projectName: n.name } });
+                    });
+                  patch({ adapterConfig: { ...p.adapterConfig, projectId: v, projectName: projects.find((x) => x.id === v)?.name } });
+                }}
+                options={[{ id: "", label: "Choose a Flick project…" }, ...projects.map((x) => ({ id: x.id, label: x.name })), { id: "__new", label: "+ New project “Film Studio Companion”" }]}
+                className="text-12"
+              />
+            </div>
+          ) : (
+            <button disabled={!!busy} onClick={() => run("projects", async () => setProjects(await flickProjects(p)))} className="h-7 flex-1 rounded-6 bg-w10 px-2 text-left font-semibold disabled:opacity-50">
+              {busy === "projects" ? "Loading projects…" : p.adapterConfig?.projectName || "Choose a Flick project…"}
+            </button>
+          )}
+        </div>
+      )}
+      {p.adapter === "imagineart" && <p className="text-w50">Organization: {p.adapterConfig?.orgId ? "chosen" : "picked automatically on the first render (you have one)"}.</p>}
+      {p.adapter === "flow" && <p className="text-w50">Open a project in the Google Flow Chrome window before rendering. Images cost 0 credits; files are shared through the bridge.</p>}
+      {p.adapter === "openart" && <p className="text-w50">Renders go to your default OpenArt project. Each one is price-checked before it starts.</p>}
+      {err && <p className="text-[#ff5c9a]">{err}</p>}
+    </div>
+  );
+}
+
 function PlatformCard({ p }: { p: Platform }) {
   const st = useStudio();
   const [token, setToken] = useState("");
@@ -101,7 +166,17 @@ function PlatformCard({ p }: { p: Platform }) {
         const tools = await mcpDiscover(fresh);
         patch({ tools, status: "connected", note: `${tools.length} tools discovered`, balanceSource: tools.some((t) => t.role === "balance") ? "live" : "manual" });
         const n = await syncBalance({ ...fresh, tools, status: "connected" });
-        setMsg(`Connected · ${tools.length} tools${n !== null ? ` · live balance ${n}` : ""}`);
+        // platforms with a built-in adapter: load every model they offer, with real prices
+        let models = 0;
+        if (detectAdapter({ tools })) {
+          models = await syncCatalog({ ...useStudio.getState().platforms.find((q) => q.id === p.id)!, tools, status: "connected" });
+          const cur = useStudio.getState().platforms.find((q) => q.id === p.id)!;
+          if (cur.adapter === "flick" && !cur.adapterConfig?.projectId) {
+            const mine = (await flickProjects(cur)).find((x) => /film studio companion/i.test(x.name));
+            if (mine) patch({ adapterConfig: { ...cur.adapterConfig, projectId: mine.id, projectName: mine.name } });
+          }
+        }
+        setMsg(`Connected · ${tools.length} tools${models ? ` · ${models} models` : ""}${n !== null ? ` · live balance ${n}` : ""}`);
       } else if (p.mode === "cli") {
         setMsg(await bridgeHealth());
         patch({ status: "connected", note: "CLI reachable through the local bridge" });
@@ -177,6 +252,7 @@ function PlatformCard({ p }: { p: Platform }) {
           <Rerun size={10} /> Reset to allotment
         </button>
       </div>
+      {p.adapter && <AdapterSetup p={p} patch={patch} />}
       <button onClick={() => setOpen(!open)} className="text-left text-w50">
         {open ? "▾" : "▸"} Models on this platform ({Object.keys(p.models).length}) · features ({p.features.length}) · tools ({p.tools.length})
       </button>
@@ -184,7 +260,7 @@ function PlatformCard({ p }: { p: Platform }) {
         <div className="flex flex-col gap-2">
           <div className="grid grid-cols-[1fr_80px] gap-1">
             {st.models
-              .filter((m) => m.kind !== "audio")
+              .filter((m) => m.kind !== "audio" && (!p.adapter || p.models[m.id] !== undefined))
               .map((m) => (
                 <label key={m.id} className="contents">
                   <span className="flex items-center gap-1.5">

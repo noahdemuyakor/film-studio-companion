@@ -9,6 +9,7 @@ import type { LedgerEntry, McpTool, ModelDef, Platform, RouteMode, RoutePlan } f
 import { getPath, uid } from "./util";
 import { estimateCost } from "./router";
 import { callClaude, claudeSource } from "./engine";
+import { detectAdapter, renderOn } from "./adapters";
 
 /* ------------------------------ MCP client ------------------------------ */
 
@@ -31,7 +32,7 @@ function parseRpcBody(text: string) {
   throw new Error("MCP server sent an unreadable reply");
 }
 
-async function bridgeHeaders(): Promise<Record<string, string>> {
+export async function bridgeHeaders(): Promise<Record<string, string>> {
   const token = await decryptSecret(useStudio.getState().bridgeTokenEnc);
   return token ? { "x-bridge-token": token } : {};
 }
@@ -100,7 +101,7 @@ export async function mcpDiscover(pf: Platform): Promise<McpTool[]> {
   return tools;
 }
 
-function textOf(result: unknown): string {
+export function textOf(result: unknown): string {
   const c = (result as { content?: { type: string; text?: string }[] })?.content || [];
   return c.filter((x) => x.type === "text").map((x) => x.text).join("\n");
 }
@@ -342,7 +343,16 @@ export async function executeOnPlatform(pf: Platform, model: ModelDef, controls:
   let url: string | undefined;
   let simulated = true;
   if (st.liveRenders && pf.status === "connected") {
-    if (pf.mode === "mcp-remote" || pf.mode === "mcp-stdio") {
+    if ((pf.mode === "mcp-remote" || pf.mode === "mcp-stdio") && (pf.adapter || detectAdapter(pf))) {
+      // a built-in adapter knows this platform's real inputs and how to fetch the finished file
+      const c = controls as { prompt?: string; aspect_ratio?: string; duration?: number; resolution?: string };
+      url = await renderOn(
+        pf,
+        { modelId: model.id, kind: model.kind, prompt: String(c.prompt || ""), aspect: c.aspect_ratio || "16:9", duration: Number(c.duration) || 5, resolution: c.resolution, maxCredits: Math.ceil(cost * 1.5) + 5 },
+        onLine,
+      );
+      simulated = false;
+    } else if (pf.mode === "mcp-remote" || pf.mode === "mcp-stdio") {
       const tool = pf.tools.find((t) => t.role === "generate" && (model.kind === "image" ? /image|imagine/.test(t.name) : /video|clip|generate/.test(t.name))) || pf.tools.find((t) => t.role === "generate");
       if (!tool) throw new Error(`${pf.name} exposes no generation tool`);
       onLine?.(`tools/call ${tool.name}`);

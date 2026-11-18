@@ -88,6 +88,21 @@ export function ShotCard({ shot, onRerun, onChain, onTimeline, onDelete }: { sho
   );
 }
 
+/** Live renders spend real credits on the chosen platform; off = free previews (Claude still writes the prompt). */
+export function LiveToggle() {
+  const live = useStudio((s) => s.liveRenders);
+  const set = useStudio((s) => s.set);
+  return (
+    <label
+      title={live ? "Live: real renders, paid from the platform's credits" : "Preview: nothing is rendered or spent"}
+      className={`h-8 px-2 rounded-8 flex items-center gap-1.5 text-12 font-semibold cursor-pointer ${live ? "bg-lime text-dark" : "bg-w5 text-w60"}`}
+    >
+      <input type="checkbox" className="accent-[#1b2024]" checked={live} onChange={(e) => set({ liveRenders: e.target.checked })} />
+      {live ? "Live" : "Preview"}
+    </label>
+  );
+}
+
 /** Short label for one platform in a "Pay with" list: name, balance and anything that stops it being used. */
 function payLabel(p: { name: string; balance: number; enabled: boolean; status: string }, modelOk: boolean | null) {
   const note = !p.enabled ? " · switched off" : modelOk === false ? " · doesn't offer this model" : p.status !== "connected" ? " · not connected (preview only)" : "";
@@ -134,6 +149,7 @@ export function RouteSelector({ mode, lock, onChange, compact, modelId }: { mode
         </div>
       )}
       {warn && <p className="text-[10px] text-[#ff5c9a]">{warn}</p>}
+      {!compact && <LiveToggle />}
     </div>
   );
 }
@@ -147,6 +163,8 @@ export function PayWith({ modelId }: { modelId?: string }) {
   const chosen = st.platforms.find((p) => p.id === value);
   const bad = chosen && (!chosen.enabled || offers(chosen) === false);
   return (
+    <>
+    <LiveToggle />
     <span className={`h-8 px-2 rounded-8 bg-w5 flex items-center gap-1 text-12 font-semibold ${bad ? "ring-1 ring-[#ff5c9a]" : ""}`} title={bad ? `${chosen!.name} can't run this model — pick another` : "Whose credits pay for this generation"}>
       <span className="text-w50">Pay with</span>
       <Select
@@ -157,6 +175,7 @@ export function PayWith({ modelId }: { modelId?: string }) {
         className="text-12"
       />
     </span>
+    </>
   );
 }
 

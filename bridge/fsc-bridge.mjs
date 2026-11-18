@@ -19,8 +19,8 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSION = "1.0.0";
@@ -148,6 +148,24 @@ function runClaude(res, body) {
   child.stdin.end(user);
 }
 
+/* ------------------- local media (e.g. Google Flow downloads) ------------------- */
+// Tools like flow-mcp save results as files on this computer. The studio can only show a URL, so a file
+// inside one of allowed.json's "mediaRoots" is copied into the served output folder under a random name.
+const MEDIA_ROOTS = (config.mediaRoots || []).map((r) => resolve(String(r).replace(/^~(?=$|[\\/])/, HOME)));
+const MEDIA_EXT = /\.(png|jpe?g|webp|gif|mp4|mov|webm|m4a|mp3|wav)$/i;
+function importMedia(res, body) {
+  const p = resolve(String(body.path || ""));
+  const inRoot = MEDIA_ROOTS.some((r) => p.toLowerCase().startsWith((r.endsWith(sep) ? r : r + sep).toLowerCase()));
+  if (!inRoot) return send(res, 403, { error: `Only files under mediaRoots in bridge/allowed.json can be shared (${MEDIA_ROOTS.join(", ") || "none set"})` });
+  if (!MEDIA_EXT.test(p)) return send(res, 400, { error: "Only image, video and audio files can be shared" });
+  if (!existsSync(p)) return send(res, 404, { error: "File not found" });
+  const dir = join(OUT, "imports");
+  mkdirSync(dir, { recursive: true });
+  const name = `${randomBytes(9).toString("base64url")}-${basename(p).replace(/[^\w.-]+/g, "_")}`;
+  copyFileSync(p, join(dir, name));
+  send(res, 200, { file: `imports/${name}` });
+}
+
 /* ----------------------------- stdio MCP ----------------------------- */
 const servers = new Map(); // id -> { child, pending: Map, buf }
 
@@ -206,6 +224,7 @@ http
       if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true, version: VERSION, allowed: [...allowed], outputDir: OUT, claude: CLAUDE_BIN });
       if (req.method === "POST" && req.url === "/cli/run") return runCli(req, res, await readBody(req));
       if (req.method === "POST" && req.url === "/claude") return runClaude(res, await readBody(req));
+      if (req.method === "POST" && req.url === "/media/import") return importMedia(res, await readBody(req));
       const m = req.url.match(/^\/mcp\/([^/]+)\/rpc$/);
       if (req.method === "POST" && m) {
         const body = await readBody(req);
